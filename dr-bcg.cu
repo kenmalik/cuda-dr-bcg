@@ -67,12 +67,16 @@ int dr_bcg(
     std::cout << "r:" << std::endl;
     print_matrix(r.data(), n, 1);
 
-    CUBLAS_CHECK(cublasDestroy_v2(cublasH));
+    cusolverDnHandle_t cusolverH = NULL;
+    cusolverDnParams_t cusolverParams = NULL;
+
+    CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
+    CUSOLVER_CHECK(cusolverDnCreateParams(&cusolverParams));
 
     std::cout << "[INFO]Starting QR procedure [w, sigma] = qr(r)" << std::endl;
     std::vector<float> w(n * n);
     std::vector<float> sigma(n * n);
-    qr_decomposition(w.data(), sigma.data(), n, A, b);
+    qr_decomposition(cusolverH, cusolverParams, w.data(), sigma.data(), n, A, b);
 
     std::cout << "\nAfter [w, sigma] = qr(r)\n"
               << std::endl;
@@ -80,6 +84,9 @@ int dr_bcg(
     print_matrix(w.data(), n, n);
     std::cout << "sigma:" << std::endl;
     print_matrix(sigma.data(), n, n);
+
+    CUBLAS_CHECK(cublasDestroy_v2(cublasH));
+    CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
 
     return iterations;
 }
@@ -121,11 +128,8 @@ void get_r(cublasHandle_t &cublasH, float *h_r, const int &n, const float *A, co
     CUDA_CHECK(cudaFree(d_r));
 }
 
-void qr_decomposition(float *q, float *r, const int n, float *A, const float *b)
+void qr_decomposition(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *q, float *r, const int n, float *A, const float *b)
 {
-    cusolverDnHandle_t cusolverH = NULL;
-    cusolverDnParams_t params = NULL;
-
     std::vector<float> tau(n, 0);
     int info = 0;
 
@@ -138,9 +142,6 @@ void qr_decomposition(float *q, float *r, const int n, float *A, const float *b)
     void *d_work = nullptr;
     size_t lwork_geqrf_h = 0;
     void *h_work = nullptr;
-
-    CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
-    CUSOLVER_CHECK(cusolverDnCreateParams(&params));
 
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * n * n));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_b), sizeof(float) * n));
@@ -200,8 +201,6 @@ void qr_decomposition(float *q, float *r, const int n, float *A, const float *b)
     CUDA_CHECK(cudaFree(d_work));
 
     free(h_work);
-
-    CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
 }
 
 void fill_random(float *mat, const int rows, const int cols)
