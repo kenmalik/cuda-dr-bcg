@@ -121,14 +121,12 @@ void qr_decomposition(float *q, float *r, const int n, float *A, const float *b)
     cusolverDnHandle_t cusolverH = NULL;
     cusolverDnParams_t params = NULL;
 
-    using data_type = float;
-
-    std::vector<data_type> tau(n, 0);
+    std::vector<float> tau(n, 0);
     int info = 0;
 
-    data_type *d_A = nullptr;
-    data_type *d_b = nullptr;
-    data_type *d_tau = nullptr;
+    float *d_A = nullptr;
+    float *d_b = nullptr;
+    float *d_tau = nullptr;
     int *d_info = nullptr;
 
     size_t lwork_geqrf_d = 0;
@@ -139,13 +137,13 @@ void qr_decomposition(float *q, float *r, const int n, float *A, const float *b)
     CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
     CUSOLVER_CHECK(cusolverDnCreateParams(&params));
 
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(data_type) * n * n));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_b), sizeof(data_type) * n));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_tau), sizeof(data_type) * tau.size()));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * n * n));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_b), sizeof(float) * n));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_tau), sizeof(float) * tau.size()));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
 
-    CUDA_CHECK(cudaMemcpy(d_A, A, sizeof(data_type) * n * n, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_b, b, sizeof(data_type) * n, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_A, A, sizeof(float) * n * n, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_b, b, sizeof(float) * n, cudaMemcpyHostToDevice));
 
     CUSOLVER_CHECK(cusolverDnXgeqrf_bufferSize(cusolverH, params, n, n, CUDA_R_32F, d_A,
                                                n, CUDA_R_32F, d_tau,
@@ -169,9 +167,9 @@ void qr_decomposition(float *q, float *r, const int n, float *A, const float *b)
                                     lwork_geqrf_h, d_info));
 
     // Copy R (stored in upper triangular)
-    CUDA_CHECK(cudaMemcpy(r, d_A, sizeof(data_type) * n * n, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(r, d_A, sizeof(float) * n * n, cudaMemcpyDeviceToHost));
 
-    CUDA_CHECK(cudaMemcpy(tau.data(), d_tau, sizeof(data_type) * tau.size(), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(tau.data(), d_tau, sizeof(float) * tau.size(), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
 
     if (0 > info)
@@ -180,7 +178,7 @@ void qr_decomposition(float *q, float *r, const int n, float *A, const float *b)
         exit(1);
     }
 
-    CUDA_CHECK(cudaMemcpy(A, d_A, sizeof(data_type) * n * n, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(A, d_A, sizeof(float) * n * n, cudaMemcpyDeviceToHost));
 
     // Explicitly compute Q
     int lwork_orgqr = 0;
@@ -188,7 +186,7 @@ void qr_decomposition(float *q, float *r, const int n, float *A, const float *b)
     CUSOLVER_CHECK(cusolverDnSorgqr(cusolverH, n, n, n, d_A, n, d_tau, reinterpret_cast<float *>(d_work), lwork_orgqr, d_info));
 
     // Copy Q
-    CUDA_CHECK(cudaMemcpy(q, d_A, sizeof(data_type) * n * n, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(q, d_A, sizeof(float) * n * n, cudaMemcpyDeviceToHost));
 
     CUDA_CHECK(cudaFree(d_A));
     CUDA_CHECK(cudaFree(d_b));
