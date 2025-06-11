@@ -1,5 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name="dr-bcg"
+#SBATCH --output="output/dr-bcg.%j.%N.out"
+#SBATCH --error="output/dr-bcg.%j.%N.err"
 #SBATCH --partition=gpuA100x4
 #SBATCH --mem=20G
 #SBATCH --nodes=1

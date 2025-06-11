@@ -1,45 +1,11 @@
 #include <iostream>
+#include <vector>
 
-#include <cutlass/util/host_tensor.h>
-#include <cutlass/util/reference/host/tensor_fill.h>
-#include <cutlass/util/tensor_view_io.h>
-#include <cutlass/layout/layout.h>
 #include <cublas_v2.h>
-#include <cute/tensor.hpp>
 #include <cusolverDn.h>
 
-#define CHECK_CUDA(call)                            \
-    do                                              \
-    {                                               \
-        cudaError_t status = call;                  \
-        if (status != CUDA_SUCCESS)                 \
-        {                                           \
-            std::cerr << "CUDA error" << std::endl; \
-            exit(EXIT_FAILURE);                     \
-        }                                           \
-    } while (0)
-
-#define CHECK_CUBLAS(call)                            \
-    do                                                \
-    {                                                 \
-        cublasStatus_t status = call;                 \
-        if (status != CUBLAS_STATUS_SUCCESS)          \
-        {                                             \
-            std::cerr << "cuBLAS error" << std::endl; \
-            exit(EXIT_FAILURE);                       \
-        }                                             \
-    } while (0)
-
-#define CHECK_CUSOLVER(call)                            \
-    do                                                  \
-    {                                                   \
-        cusolverStatus_t status = call;                 \
-        if (status != CUSOLVER_STATUS_SUCCESS)          \
-        {                                               \
-            std::cerr << "cuSolver error" << std::endl; \
-            exit(EXIT_FAILURE);                         \
-        }                                               \
-    } while (0)
+#include "helper.h"
+#include "dr-bcg.h"
 
 void print_matrix(const float *mat, const int rows, const int cols)
 {
@@ -76,7 +42,7 @@ void print_matrix(const float *mat, const int rows, const int cols)
  * end
  */
 int dr_bcg(
-    const float *A,
+    float *A,
     const int n,
     const float *x,
     const float *b,
@@ -85,39 +51,152 @@ int dr_bcg(
 {
     int iterations = 0;
 
-    cublasHandle_t cuBLAS_handle;
-    CHECK_CUBLAS(cublasCreate(&cuBLAS_handle));
+    cublasHandle_t cublasH;
+    CUBLAS_CHECK(cublasCreate(&cublasH));
 
     // r = b - Ax as GEMM:
     // r = -1.0 * Ax + r where r initially contains b
     const float alpha = -1;
     const float beta = 1;
 
-    // Copy b into r
-    float *r = (float *)malloc(n * sizeof(float));
-    for (int i = 0; i < n; i++)
-    {
-        r[i] = b[i];
-    }
+    float *h_r = (float *)malloc(n * sizeof(float));
+    float *d_A = nullptr;
+    float *d_x = nullptr;
+    float *d_r = nullptr;
 
-    CHECK_CUBLAS(cublasSgemv(
-        cuBLAS_handle,
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * n * n));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_x), sizeof(float) * n));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_r), sizeof(float) * n));
+
+    CUDA_CHECK(cudaMemcpy(d_A, A, sizeof(float) * n * n, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_x, x, sizeof(float) * n, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_r, b, sizeof(float) * n, cudaMemcpyHostToDevice));
+
+    CUBLAS_CHECK(cublasSgemv(
+        cublasH,
         CUBLAS_OP_N,
         n,
         n,
         &alpha,
-        A, n,
-        x, 1,
+        d_A, n,
+        d_x, 1,
         &beta,
-        r, 1));
+        d_r, 1));
 
+    CUDA_CHECK(cudaMemcpy(h_r, d_r, sizeof(float) * n, cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaFree(d_A));
+    CUDA_CHECK(cudaFree(d_x));
+    CUDA_CHECK(cudaFree(d_r));
+
+    std::cout << "\nAfter r = b - Ax\n"
+              << std::endl;
+    std::cout << "A:" << std::endl;
     print_matrix(A, n, n);
+    std::cout << "x:" << std::endl;
     print_matrix(x, n, 1);
-    print_matrix(r, n, 1);
+    std::cout << "r:" << std::endl;
+    print_matrix(h_r, n, 1);
 
-    free(r);
+    CUBLAS_CHECK(cublasDestroy_v2(cublasH));
+    free(h_r);
 
-    return 0;
+    std::cout << "[INFO]Starting QR procedure [w, sigma] = qr(r)" << std::endl;
+    std::vector<float> w(n * n);
+    std::vector<float> sigma(n * n);
+    qr_decomposition(w.data(), sigma.data(), n, A, b);
+
+    std::cout << "\nAfter [w, sigma] = qr(r)\n"
+              << std::endl;
+    std::cout << "w:" << std::endl;
+    print_matrix(w.data(), n, n);
+    std::cout << "sigma:" << std::endl;
+    print_matrix(sigma.data(), n, n);
+
+    return iterations;
+}
+
+void qr_decomposition(float *q, float *r, const int n, float *A, const float *b)
+{
+    cusolverDnHandle_t cusolverH = NULL;
+    cusolverDnParams_t params = NULL;
+
+    std::vector<float> tau(n, 0);
+    int info = 0;
+
+    float *d_A = nullptr;
+    float *d_b = nullptr;
+    float *d_tau = nullptr;
+    int *d_info = nullptr;
+
+    size_t lwork_geqrf_d = 0;
+    void *d_work = nullptr;
+    size_t lwork_geqrf_h = 0;
+    void *h_work = nullptr;
+
+    CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
+    CUSOLVER_CHECK(cusolverDnCreateParams(&params));
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * n * n));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_b), sizeof(float) * n));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_tau), sizeof(float) * tau.size()));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
+
+    CUDA_CHECK(cudaMemcpy(d_A, A, sizeof(float) * n * n, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_b, b, sizeof(float) * n, cudaMemcpyHostToDevice));
+
+    CUSOLVER_CHECK(cusolverDnXgeqrf_bufferSize(cusolverH, params, n, n, CUDA_R_32F, d_A,
+                                               n, CUDA_R_32F, d_tau,
+                                               CUDA_R_32F, &lwork_geqrf_d,
+                                               &lwork_geqrf_h));
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), lwork_geqrf_d));
+
+    if (0 < lwork_geqrf_h)
+    {
+        h_work = reinterpret_cast<void *>(malloc(lwork_geqrf_h));
+        if (h_work == nullptr)
+        {
+            throw std::runtime_error("Error: h_work not allocated.");
+        }
+    }
+
+    CUSOLVER_CHECK(cusolverDnXgeqrf(cusolverH, params, n, n, CUDA_R_32F, d_A,
+                                    n, CUDA_R_32F, d_tau,
+                                    CUDA_R_32F, d_work, lwork_geqrf_d, h_work,
+                                    lwork_geqrf_h, d_info));
+
+    // Copy R (stored in upper triangular)
+    CUDA_CHECK(cudaMemcpy(r, d_A, sizeof(float) * n * n, cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(tau.data(), d_tau, sizeof(float) * tau.size(), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
+
+    if (0 > info)
+    {
+        std::printf("%d-th parameter is wrong \n", -info);
+        exit(1);
+    }
+
+    CUDA_CHECK(cudaMemcpy(A, d_A, sizeof(float) * n * n, cudaMemcpyDeviceToHost));
+
+    // Explicitly compute Q
+    int lwork_orgqr = 0;
+    CUSOLVER_CHECK(cusolverDnSorgqr_bufferSize(cusolverH, n, n, n, d_A, n, d_tau, &lwork_orgqr));
+    CUSOLVER_CHECK(cusolverDnSorgqr(cusolverH, n, n, n, d_A, n, d_tau, reinterpret_cast<float *>(d_work), lwork_orgqr, d_info));
+
+    // Copy Q
+    CUDA_CHECK(cudaMemcpy(q, d_A, sizeof(float) * n * n, cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaFree(d_A));
+    CUDA_CHECK(cudaFree(d_b));
+    CUDA_CHECK(cudaFree(d_info));
+    CUDA_CHECK(cudaFree(d_tau));
+    CUDA_CHECK(cudaFree(d_work));
+
+    free(h_work);
+
+    CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
 }
 
 void fill_random(float *mat, const int rows, const int cols)
@@ -140,21 +219,14 @@ int main(int argc, char *argv[])
     float *A = (float *)malloc(n * n * sizeof(float));
     fill_random(A, n, n);
     float *x = (float *)malloc(n * sizeof(float));
-    print_matrix(x, n, 1);
     float *b = (float *)malloc(n * sizeof(float));
     fill_random(b, n, 1);
 
     dr_bcg(A, n, x, b, tolerance, max_iterations);
 
-    // // A is a column-major n*n matrix
-    // cute::Layout A_layout = cute::make_layout(cute::make_shape(n, n), cute::LayoutLeft{});
-    // cute::Tensor A = cute::make_tensor(A, A_layout);
-
-    // cute::Layout vector_layout = cute::make_layout(cute::make_shape(n, 1), cute::LayoutLeft{});
-    // cute::Tensor x = cute::make_tensor(x, vector_layout); // x is a column-major n*1 matrix
-    // cute::Tensor b = cute::make_tensor(b, vector_layout); // b is a column-major n*1 matrix
-
     free(A);
     free(x);
     free(b);
+
+    return 0;
 }
