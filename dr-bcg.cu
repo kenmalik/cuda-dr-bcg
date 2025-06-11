@@ -54,12 +54,43 @@ int dr_bcg(
     cublasHandle_t cublasH;
     CUBLAS_CHECK(cublasCreate(&cublasH));
 
-    // r = b - Ax as GEMM:
-    // r = -1.0 * Ax + r where r initially contains b
-    const float alpha = -1;
-    const float beta = 1;
+    std::vector<float> r(n);
 
-    float *h_r = (float *)malloc(n * sizeof(float));
+    get_r(cublasH, r.data(), n, A, x, b);
+
+    std::cout << "\nAfter r = b - Ax\n"
+              << std::endl;
+    std::cout << "A:" << std::endl;
+    print_matrix(A, n, n);
+    std::cout << "x:" << std::endl;
+    print_matrix(x, n, 1);
+    std::cout << "r:" << std::endl;
+    print_matrix(r.data(), n, 1);
+
+    CUBLAS_CHECK(cublasDestroy_v2(cublasH));
+
+    std::cout << "[INFO]Starting QR procedure [w, sigma] = qr(r)" << std::endl;
+    std::vector<float> w(n * n);
+    std::vector<float> sigma(n * n);
+    qr_decomposition(w.data(), sigma.data(), n, A, b);
+
+    std::cout << "\nAfter [w, sigma] = qr(r)\n"
+              << std::endl;
+    std::cout << "w:" << std::endl;
+    print_matrix(w.data(), n, n);
+    std::cout << "sigma:" << std::endl;
+    print_matrix(sigma.data(), n, n);
+
+    return iterations;
+}
+
+// r = b - Ax as GEMM:
+// r = -1.0 * Ax + r where r initially contains b
+void get_r(cublasHandle_t &cublasH, float *h_r, const int &n, const float *A, const float *x, const float *b)
+{
+    constexpr float alpha = -1;
+    constexpr float beta = 1;
+
     float *d_A = nullptr;
     float *d_x = nullptr;
     float *d_r = nullptr;
@@ -88,32 +119,6 @@ int dr_bcg(
     CUDA_CHECK(cudaFree(d_A));
     CUDA_CHECK(cudaFree(d_x));
     CUDA_CHECK(cudaFree(d_r));
-
-    std::cout << "\nAfter r = b - Ax\n"
-              << std::endl;
-    std::cout << "A:" << std::endl;
-    print_matrix(A, n, n);
-    std::cout << "x:" << std::endl;
-    print_matrix(x, n, 1);
-    std::cout << "r:" << std::endl;
-    print_matrix(h_r, n, 1);
-
-    CUBLAS_CHECK(cublasDestroy_v2(cublasH));
-    free(h_r);
-
-    std::cout << "[INFO]Starting QR procedure [w, sigma] = qr(r)" << std::endl;
-    std::vector<float> w(n * n);
-    std::vector<float> sigma(n * n);
-    qr_decomposition(w.data(), sigma.data(), n, A, b);
-
-    std::cout << "\nAfter [w, sigma] = qr(r)\n"
-              << std::endl;
-    std::cout << "w:" << std::endl;
-    print_matrix(w.data(), n, n);
-    std::cout << "sigma:" << std::endl;
-    print_matrix(sigma.data(), n, n);
-
-    return iterations;
 }
 
 void qr_decomposition(float *q, float *r, const int n, float *A, const float *b)
