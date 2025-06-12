@@ -32,3 +32,8 @@
             throw std::runtime_error("cublas error");                                \
         }                                                                            \
     } while (0)
+
+
+void fill_random(float *mat, const int rows, const int cols);
+
+void print_matrix(const float *mat, const int rows, const int cols);

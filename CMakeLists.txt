@@ -9,11 +9,17 @@ enable_language(CUDA)
 
 set(CMAKE_CUDA_ARCHITECTURES 80)
 
-add_executable(dr-bcg dr-bcg.cu)
-target_compile_options(dr-bcg PUBLIC
+add_library(dr_bcg
+    "src/dr-bcg.cu"
+    "src/helper.cu"
+)
+target_include_directories(dr_bcg PUBLIC "include")
+target_link_libraries(dr_bcg PRIVATE CUDA::cublas CUDA::cusolver)
+target_compile_options(dr_bcg PUBLIC
     $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
 )
 
-target_include_directories(dr-bcg PRIVATE "cutlass/include" "cutlass/tools/util/include")
-
-target_link_libraries(dr-bcg PRIVATE CUDA::cublas CUDA::cusolver)
+add_executable(example
+    "examples/example.cpp"
+)
+target_link_libraries(example PRIVATE dr_bcg)
