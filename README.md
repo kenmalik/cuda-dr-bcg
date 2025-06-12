@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This is an implementation of the DR-BCG algorithm for solving linear systems using CUDA.
+This is a CUDA implementation of the Dubrulle-R Block Conjugate Gradient (DR-BCG) algorithm for solving linear systems.
 
 The implementation was originally derived from the following MATLAB code:
 
@@ -29,3 +29,14 @@ function [X_final, iterations] = DR_BCG(A, B, X, tol, maxit)
 end
 ```
 
+## Running Examples
+
+The Makefile in the root directory contains a target `run` which will run a SLURM script using `srun`.
+The Makefile requires you to define an environment variable which defines the account you will run the script on.
+
+Run the example like so, replacing `my-acct-num` with your account identifier:
+
+```bash
+export ACCOUNT=my-acct-num
+make run
+```
