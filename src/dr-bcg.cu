@@ -31,8 +31,9 @@ namespace dr_bcg
     int dr_bcg(
         float *A,
         const int n,
-        const float *x,
-        const float *b,
+        const int m,
+        const float *X,
+        const float *B,
         const float tolerance,
         const int max_iterations)
     {
@@ -41,18 +42,20 @@ namespace dr_bcg
         cublasHandle_t cublasH;
         CUBLAS_CHECK(cublasCreate(&cublasH));
 
-        std::vector<float> r(n);
+        std::vector<float> R(n * m);
 
-        get_r(cublasH, r.data(), n, A, x, b);
+        get_R(cublasH, R.data(), n, m, A, X, B);
 
-        std::cout << "\nAfter r = b - Ax\n"
+        std::cout << "\nAfter R = B - AX\n"
                   << std::endl;
         std::cout << "A:" << std::endl;
         print_matrix(A, n, n);
-        std::cout << "x:" << std::endl;
-        print_matrix(x, n, 1);
-        std::cout << "r:" << std::endl;
-        print_matrix(r.data(), n, 1);
+        std::cout << "X:" << std::endl;
+        print_matrix(X, n, m);
+        std::cout << "B:" << std::endl;
+        print_matrix(B, n, m);
+        std::cout << "R:" << std::endl;
+        print_matrix(R.data(), n, m);
 
         cusolverDnHandle_t cusolverH = NULL;
         cusolverDnParams_t cusolverParams = NULL;
@@ -60,10 +63,10 @@ namespace dr_bcg
         CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
         CUSOLVER_CHECK(cusolverDnCreateParams(&cusolverParams));
 
-        std::cout << "[INFO]Starting QR procedure [w, sigma] = qr(r)" << std::endl;
+        std::cout << "[INFO]Starting QR procedure [w, sigma] = qr(R)" << std::endl;
         std::vector<float> w(n * n);
         std::vector<float> sigma(n * n);
-        qr_decomposition(cusolverH, cusolverParams, w.data(), sigma.data(), n, A, b);
+        qr_decomposition(cusolverH, cusolverParams, w.data(), sigma.data(), n, A);
 
         std::cout << "\nAfter [w, sigma] = qr(r)\n"
                   << std::endl;
@@ -83,50 +86,43 @@ namespace dr_bcg
         return iterations;
     }
 
-    // r = b - Ax as GEMM:
-    // r = -1.0 * Ax + r where r initially contains b
-    void get_r(cublasHandle_t &cublasH, float *h_r, const int &n, const float *A, const float *x, const float *b)
+    // R = B - AX as GEMM:
+    // R = -1.0 * AX + R where R initially contains B
+    void get_R(cublasHandle_t &cublasH, float *h_R, const int n, const int m, const float *A, const float *X, const float *B)
     {
         constexpr float alpha = -1;
         constexpr float beta = 1;
 
         float *d_A = nullptr;
-        float *d_x = nullptr;
-        float *d_r = nullptr;
+        float *d_X = nullptr;
+        float *d_R = nullptr;
 
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * n * n));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_x), sizeof(float) * n));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_r), sizeof(float) * n));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * n * m));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_R), sizeof(float) * n * m));
 
         CUDA_CHECK(cudaMemcpy(d_A, A, sizeof(float) * n * n, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_x, x, sizeof(float) * n, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_r, b, sizeof(float) * n, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_X, X, sizeof(float) * n * m, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_R, B, sizeof(float) * n * m, cudaMemcpyHostToDevice));
 
-        CUBLAS_CHECK(cublasSgemv(
-            cublasH,
-            CUBLAS_OP_N,
-            n,
-            n,
-            &alpha,
-            d_A, n,
-            d_x, 1,
-            &beta,
-            d_r, 1));
+        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N,
+                                    n, m, n,
+                                    &alpha, d_A, n, d_X, n,
+                                    &beta, d_R, n));
 
-        CUDA_CHECK(cudaMemcpy(h_r, d_r, sizeof(float) * n, cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(h_R, d_R, sizeof(float) * n * m, cudaMemcpyDeviceToHost));
 
         CUDA_CHECK(cudaFree(d_A));
-        CUDA_CHECK(cudaFree(d_x));
-        CUDA_CHECK(cudaFree(d_r));
+        CUDA_CHECK(cudaFree(d_X));
+        CUDA_CHECK(cudaFree(d_R));
     }
 
-    void qr_decomposition(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *q, float *r, const int n, float *A, const float *b)
+    void qr_decomposition(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *q, float *r, const int n, float *A)
     {
         std::vector<float> tau(n, 0);
         int info = 0;
 
         float *d_A = nullptr;
-        float *d_b = nullptr;
         float *d_tau = nullptr;
         int *d_info = nullptr;
 
@@ -136,12 +132,10 @@ namespace dr_bcg
         void *h_work = nullptr;
 
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * n * n));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_b), sizeof(float) * n));
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_tau), sizeof(float) * tau.size()));
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
 
         CUDA_CHECK(cudaMemcpy(d_A, A, sizeof(float) * n * n, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_b, b, sizeof(float) * n, cudaMemcpyHostToDevice));
 
         CUSOLVER_CHECK(cusolverDnXgeqrf_bufferSize(cusolverH, params, n, n, CUDA_R_32F, d_A,
                                                    n, CUDA_R_32F, d_tau,
@@ -187,7 +181,6 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(q, d_A, sizeof(float) * n * n, cudaMemcpyDeviceToHost));
 
         CUDA_CHECK(cudaFree(d_A));
-        CUDA_CHECK(cudaFree(d_b));
         CUDA_CHECK(cudaFree(d_info));
         CUDA_CHECK(cudaFree(d_tau));
         CUDA_CHECK(cudaFree(d_work));

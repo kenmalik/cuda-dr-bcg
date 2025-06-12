@@ -11,4 +11,4 @@
 #SBATCH --no-requeue
 #SBATCH -t 01:00:00
 
-srun build/dr-bcg
+srun build/example
