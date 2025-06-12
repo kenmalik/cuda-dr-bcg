@@ -4,20 +4,8 @@
 #include <cublas_v2.h>
 #include <cusolverDn.h>
 
-#include "helper.h"
 #include "dr-bcg.h"
-
-void print_matrix(const float *mat, const int rows, const int cols)
-{
-    for (int i = 0; i < rows; i++)
-    {
-        for (int j = 0; j < cols; j++)
-        {
-            printf("%6.3f ", mat[i * cols + j]);
-        }
-        std::cout << std::endl;
-    }
-}
+#include "helper.h"
 
 /*
  * function [X_final, iterations] = DR_BCG(A, B, X, tol, maxit)
@@ -88,8 +76,14 @@ int dr_bcg(
     CUBLAS_CHECK(cublasDestroy_v2(cublasH));
     CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
 
+    for (int k = 0; k < max_iterations; k++) {
+        iterations++;
+        
+    }
+
     return iterations;
 }
+
 
 // r = b - Ax as GEMM:
 // r = -1.0 * Ax + r where r initially contains b
@@ -201,36 +195,4 @@ void qr_decomposition(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params,
     CUDA_CHECK(cudaFree(d_work));
 
     free(h_work);
-}
-
-void fill_random(float *mat, const int rows, const int cols)
-{
-    for (int i = 0; i < rows; i++)
-    {
-        for (int j = 0; j < cols; j++)
-        {
-            mat[i * cols + j] = rand() % 100 / 100.0;
-        }
-    }
-}
-
-int main(int argc, char *argv[])
-{
-    constexpr int n = 16;
-    constexpr float tolerance = 0.001;
-    constexpr int max_iterations = 100;
-
-    float *A = (float *)malloc(n * n * sizeof(float));
-    fill_random(A, n, n);
-    float *x = (float *)malloc(n * sizeof(float));
-    float *b = (float *)malloc(n * sizeof(float));
-    fill_random(b, n, 1);
-
-    dr_bcg(A, n, x, b, tolerance, max_iterations);
-
-    free(A);
-    free(x);
-    free(b);
-
-    return 0;
 }
