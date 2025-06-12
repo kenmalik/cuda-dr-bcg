@@ -15,25 +15,12 @@ namespace dr_bcg
         const float tolerance,
         const int max_iterations)
     {
-        int iterations = 0;
-
         cublasHandle_t cublasH;
         CUBLAS_CHECK(cublasCreate(&cublasH));
 
         // R = B - AX
         std::vector<float> R(m * n);
         get_R(cublasH, R.data(), m, n, A, X, B);
-
-        std::cout << "\nAfter R = B - AX\n"
-                  << std::endl;
-        std::cout << "A:" << std::endl;
-        print_matrix(A, m, m);
-        std::cout << "X:" << std::endl;
-        print_matrix(X, m, n);
-        std::cout << "B:" << std::endl;
-        print_matrix(B, m, n);
-        std::cout << "R:" << std::endl;
-        print_matrix(R.data(), m, n);
 
         cusolverDnHandle_t cusolverH = NULL;
         cusolverDnParams_t cusolverParams = NULL;
@@ -46,20 +33,48 @@ namespace dr_bcg
         std::vector<float> sigma(n * n);
         qr_factorization(cusolverH, cusolverParams, w.data(), sigma.data(), m, n, R.data());
 
-        std::cout << "\nAfter [w, sigma] = qr(R)\n"
-                  << std::endl;
-        std::cout << "w:" << std::endl;
-        print_matrix(w.data(), m, n);
-        std::cout << "sigma:" << std::endl;
-        print_matrix(sigma.data(), n, n);
+        std::vector<float> s = std::move(w);
+
+        float alpha = 1.0;
+        float beta = 0.0;
+        int iterations;
+
+        float *d_A;
+        float *d_s;
+        float *d_temp;
+        float *d_xi;
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * m * m));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_s), sizeof(float) * m * n));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_temp), sizeof(float) * n * m));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_xi), sizeof(float) * n * n));
+
+        CUDA_CHECK(cudaMemcpy(d_A, A, sizeof(float) * m * m, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_s, s.data(), sizeof(float) * m * n, cudaMemcpyHostToDevice));
+
+        for (iterations = 1; iterations < 2; iterations++)
+        {
+            // xi = (s' * A * s)^-1
+            CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_T, CUBLAS_OP_N, n, m, m,
+                                        &alpha, d_s, m, d_A, m,
+                                        &beta, d_temp, n));
+            CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, n, m,
+                                        &alpha, d_temp, n, d_s, m,
+                                        &beta, d_xi, n));
+
+            
+            std::vector<float> h_xi(n * n);
+            CUDA_CHECK(cudaMemcpy(h_xi.data(), d_xi, sizeof(float) * n * n, cudaMemcpyDeviceToHost)); // DEBUG
+            std::cout << "s^TAs:" << std::endl;
+            print_matrix(h_xi.data(), n, n);
+        }
+
+        CUDA_CHECK(cudaFree(d_A));
+        CUDA_CHECK(cudaFree(d_s));
+        CUDA_CHECK(cudaFree(d_temp));
+        CUDA_CHECK(cudaFree(d_xi));
 
         CUBLAS_CHECK(cublasDestroy_v2(cublasH));
         CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
-
-        for (int k = 0; k < max_iterations; k++)
-        {
-            iterations++;
-        }
 
         return iterations;
     }
