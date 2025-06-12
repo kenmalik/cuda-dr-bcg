@@ -1,5 +1,5 @@
 #include <iostream>
-#include "helper.h"
+#include "dr_bcg/helper.h"
 
 void print_matrix(const float *mat, const int rows, const int cols)
 {

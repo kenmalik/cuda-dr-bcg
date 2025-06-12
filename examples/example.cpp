@@ -1,7 +1,7 @@
 #include <iostream>
 
-#include "helper.h"
-#include "dr-bcg.h"
+#include "dr_bcg/helper.h"
+#include "dr_bcg/dr-bcg.h"
 
 int main(int argc, char *argv[])
 {
@@ -15,7 +15,7 @@ int main(int argc, char *argv[])
     float *b = (float *)malloc(n * sizeof(float));
     fill_random(b, n, 1);
 
-    dr_bcg(A, n, x, b, tolerance, max_iterations);
+    dr_bcg::dr_bcg(A, n, x, b, tolerance, max_iterations);
 
     free(A);
     free(x);
