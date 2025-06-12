@@ -1,8 +1,8 @@
-# DR-BCG
+# CUDA DR-BCG
 
 ## Introduction
 
-This is an implementation of the DR-BCG algorithm for solving linear systems.
+This is an implementation of the DR-BCG algorithm for solving linear systems using CUDA.
 
 The implementation was originally derived from the following MATLAB code:
 
