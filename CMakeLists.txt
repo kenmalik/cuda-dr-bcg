@@ -14,7 +14,7 @@ add_library(dr_bcg
     "src/helper.cu"
 )
 target_include_directories(dr_bcg PUBLIC "include")
-target_link_libraries(dr_bcg PRIVATE CUDA::cublas CUDA::cusolver)
+target_link_libraries(dr_bcg PUBLIC CUDA::cublas CUDA::cusolver)
 target_compile_options(dr_bcg PUBLIC
     $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
 )
@@ -23,3 +23,7 @@ add_executable(example
     "examples/example.cpp"
 )
 target_link_libraries(example PRIVATE dr_bcg)
+
+if(BUILD_TESTS)
+    add_subdirectory("test")
+endif()
