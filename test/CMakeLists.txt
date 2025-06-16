@@ -12,7 +12,7 @@ enable_testing()
 
 add_executable(
     dr_bcg_test
-    "dr_bcg_test.cpp"
+    "dr_bcg_test.cu"
 )
 target_link_libraries(
     dr_bcg_test

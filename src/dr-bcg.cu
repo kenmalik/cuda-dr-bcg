@@ -54,18 +54,14 @@ namespace dr_bcg
         for (iterations = 1; iterations < 2; iterations++)
         {
             // xi = (s' * A * s)^-1
-            CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_T, CUBLAS_OP_N, n, m, m,
-                                        &alpha, d_s, m, d_A, m,
-                                        &beta, d_temp, n));
-            CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, n, m,
-                                        &alpha, d_temp, n, d_s, m,
-                                        &beta, d_xi, n));
+            quadratic_form(cublasH, m, n, alpha, d_s, d_A, beta, d_temp, d_xi);
 
-            
             std::vector<float> h_xi(n * n);
             CUDA_CHECK(cudaMemcpy(h_xi.data(), d_xi, sizeof(float) * n * n, cudaMemcpyDeviceToHost)); // DEBUG
             std::cout << "s^TAs:" << std::endl;
             print_matrix(h_xi.data(), n, n);
+
+            invert_spd(cusolverH, cusolverParams, d_xi, n);
         }
 
         CUDA_CHECK(cudaFree(d_A));
@@ -77,6 +73,19 @@ namespace dr_bcg
         CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
 
         return iterations;
+    }
+
+    /// @brief Compute y = x^T * A * x
+    void quadratic_form(cublasHandle_t cublasH, const int m, const int n,
+                        float &alpha, float *d_x, float *d_A,
+                        float &beta, float *d_work, float *d_y)
+    {
+        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_T, CUBLAS_OP_N, n, m, m,
+                                    &alpha, d_x, m, d_A, m,
+                                    &beta, d_work, n));
+        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, n, m,
+                                    &alpha, d_work, n, d_x, m,
+                                    &beta, d_y, n));
     }
 
     // R = B - AX as GEMM:
@@ -177,5 +186,52 @@ namespace dr_bcg
         CUDA_CHECK(cudaFree(d_info));
         CUDA_CHECK(cudaFree(d_tau));
         CUDA_CHECK(cudaFree(d_work));
+    }
+
+    void invert_spd(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *A, const int64_t n)
+    {
+        std::vector<float> L(n * n);
+
+        size_t workspaceInBytesOnDevice = 0;
+        void *d_work = nullptr;
+        size_t workspaceInBytesOnHost = 0;
+        void *h_work = nullptr;
+
+        int info = 0;
+        int *d_info = nullptr;
+
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
+
+        CUSOLVER_CHECK(cusolverDnXpotrf_bufferSize(cusolverH, params, CUBLAS_FILL_MODE_LOWER,
+                                                   n, CUDA_R_32F, A, n, CUDA_R_32F,
+                                                   &workspaceInBytesOnDevice, &workspaceInBytesOnHost));
+
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), workspaceInBytesOnDevice));
+        if (0 < workspaceInBytesOnHost)
+        {
+            h_work = reinterpret_cast<void *>(malloc(sizeof(float) * workspaceInBytesOnHost));
+            if (h_work == nullptr)
+            {
+                throw std::runtime_error("Error: h_work not allocated.");
+            }
+        }
+
+        CUSOLVER_CHECK(cusolverDnXpotrf(cusolverH, params, CUBLAS_FILL_MODE_LOWER,
+                                        n, CUDA_R_32F, A, n,
+                                        CUDA_R_32F, d_work, workspaceInBytesOnDevice,
+                                        h_work, workspaceInBytesOnHost, d_info));
+        CUDA_CHECK(cudaMemcpy(L.data(), A, sizeof(float) * n * n, cudaMemcpyDeviceToHost));
+
+        CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
+        if (0 > info)
+        {
+            std::fprintf(stderr, "%d-th parameter is wrong \n", -info);
+            exit(1);
+        }
+
+        // DEBUG
+        std::cout << "\nAfter Cholesky factorization:\n"
+                  << "L:" << std::endl;
+        print_matrix(L.data(), n, n);
     }
 }
