@@ -51,18 +51,30 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(d_A, A, sizeof(float) * m * m, cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(d_s, s.data(), sizeof(float) * m * n, cudaMemcpyHostToDevice));
 
+        float *d_X;
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * m * n));
+        CUDA_CHECK(cudaMemcpy(d_X, X, sizeof(float) * m * n, cudaMemcpyHostToDevice));
+        float *d_sigma;
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_sigma), sizeof(float) * n * n));
+        CUDA_CHECK(cudaMemcpy(d_sigma, sigma.data(), sizeof(float) * n * n, cudaMemcpyHostToDevice));
+
         for (iterations = 1; iterations < 2; iterations++)
         {
             // xi = (s' * A * s)^-1
             quadratic_form(cublasH, m, n, alpha, d_s, d_A, beta, d_temp, d_xi);
             invert_spd(cusolverH, cusolverParams, d_xi, n);
 
-            // DEBUG
-            std::vector<float> h_xi(n * n);
-            CUDA_CHECK(cudaMemcpy(h_xi.data(), d_xi, sizeof(float) * n * n, cudaMemcpyDeviceToHost)); // DEBUG
-            std::cout << "(s^TAs)^-1:" << std::endl;
-            print_matrix(h_xi.data(), n, n);
+            // X = X + s * xi * sigma
+            next_X(cublasH, m, n, d_s, d_xi, d_temp, d_sigma, d_X);
+
+            std::vector<float> debug_X(m * n);
+            CUDA_CHECK(cudaMemcpy(debug_X.data(), d_X, sizeof(float) * m * n, cudaMemcpyDeviceToHost));
+            std::cout << "DEBUG: X" << std::endl;
+            print_matrix(debug_X.data(), m, n);
         }
+
+        CUDA_CHECK(cudaFree(d_X));
+        CUDA_CHECK(cudaFree(d_sigma));
 
         CUDA_CHECK(cudaFree(d_A));
         CUDA_CHECK(cudaFree(d_s));
@@ -73,6 +85,21 @@ namespace dr_bcg
         CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
 
         return iterations;
+    }
+
+    /// @brief Calculates X_{i+1} = X_{i} + s * xi * sigma
+    /// @param d_X (device memory pointer) X_{i}. Result is overwritten to pointed location
+    void next_X(cublasHandle_t cublasH, const int m, const int n, float *d_s, float *d_xi, float *d_temp, float *d_sigma, float *d_X)
+    {
+        float alpha = 1;
+        float beta = 0;
+        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, n,
+                                    &alpha, d_s, m, d_xi, n,
+                                    &beta, d_temp, m));
+        beta = 1;
+        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, n,
+                                    &alpha, d_temp, m, d_sigma, n,
+                                    &beta, d_X, m));
     }
 
     /// @brief Compute y = x^T * A * x
@@ -189,7 +216,7 @@ namespace dr_bcg
     }
 
     /// @brief Computes the inverse of a matrix using Cholesky factorization
-    /// @param A (device memory pointer) the symmetric positive definite matrix to invert. Answer is overwritten to pointed location.
+    /// @param A (device memory pointer) the symmetric positive definite matrix to invert. Result is overwritten to pointed location.
     void invert_spd(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *A, const int64_t n)
     {
         size_t workspaceInBytesOnDevice = 0;
@@ -231,7 +258,8 @@ namespace dr_bcg
         // TODO: Parallelize this
         std::vector<float> I(n * n, 0);
         float *d_I = nullptr;
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < n; i++)
+        {
             I.at(i * n + i) = 1;
         }
 
@@ -240,9 +268,9 @@ namespace dr_bcg
 
         CUSOLVER_CHECK(cusolverDnXpotrs(
             cusolverH, params, CUBLAS_FILL_MODE_LOWER,
-            n, n, CUDA_R_32F, A, n, CUDA_R_32F, d_I, n, d_info
-        ));
-        if (0 > info) {
+            n, n, CUDA_R_32F, A, n, CUDA_R_32F, d_I, n, d_info));
+        if (0 > info)
+        {
             std::fprintf(stderr, "%d-th parameter is wrong \n", -info);
             exit(1);
         }

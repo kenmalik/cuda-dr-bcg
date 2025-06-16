@@ -7,6 +7,8 @@ namespace dr_bcg
 {
     int dr_bcg(float *A, const int m, const int n, const float *X, const float *B, const float tolerance, const int max_iterations);
 
+    void next_X(cublasHandle_t cublasH, const int m, const int n, float *d_s, float *d_xi, float *d_temp, float *d_sigma, float *d_X);
+
     void quadratic_form(cublasHandle_t cublasH, const int m, const int n, float &alpha, float *d_s, float *d_A, float &beta, float *d_work, float *d_y);
 
     void qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *Q, float *R, const int m, const int n, const float *A);
