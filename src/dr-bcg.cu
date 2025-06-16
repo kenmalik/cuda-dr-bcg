@@ -31,7 +31,18 @@ namespace dr_bcg
         // [w, sigma] = qr(R)
         std::vector<float> w(m * n);
         std::vector<float> sigma(n * n);
-        qr_factorization(cusolverH, cusolverParams, w.data(), sigma.data(), m, n, R.data());
+
+        float *d_w;
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_w), sizeof(float) * w.size()));
+        CUDA_CHECK(cudaMemcpy(d_w, w.data(), sizeof(float) * w.size(), cudaMemcpyHostToDevice));
+        float *d_sigma;
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_sigma), sizeof(float) * sigma.size()));
+        CUDA_CHECK(cudaMemcpy(d_sigma, sigma.data(), sizeof(float) * sigma.size(), cudaMemcpyHostToDevice));
+
+        qr_factorization(cusolverH, cusolverParams, d_w, d_sigma, m, n, R.data());
+
+        CUDA_CHECK(cudaMemcpy(w.data(), d_w, sizeof(float) * w.size(), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(sigma.data(), d_sigma, sizeof(float) * sigma.size(), cudaMemcpyDeviceToHost));
 
         std::vector<float> s = std::move(w);
 
@@ -54,9 +65,6 @@ namespace dr_bcg
         float *d_X;
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * m * n));
         CUDA_CHECK(cudaMemcpy(d_X, X, sizeof(float) * m * n, cudaMemcpyHostToDevice));
-        float *d_sigma;
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_sigma), sizeof(float) * n * n));
-        CUDA_CHECK(cudaMemcpy(d_sigma, sigma.data(), sizeof(float) * n * n, cudaMemcpyHostToDevice));
 
         for (iterations = 1; iterations < 2; iterations++)
         {
@@ -73,8 +81,9 @@ namespace dr_bcg
             print_matrix(debug_X.data(), m, n);
         }
 
-        CUDA_CHECK(cudaFree(d_X));
+        CUDA_CHECK(cudaFree(d_w));
         CUDA_CHECK(cudaFree(d_sigma));
+        CUDA_CHECK(cudaFree(d_X));
 
         CUDA_CHECK(cudaFree(d_A));
         CUDA_CHECK(cudaFree(d_s));
@@ -152,7 +161,6 @@ namespace dr_bcg
         std::vector<float> tau(k, 0);
         int info = 0;
 
-        float *d_A = nullptr;
         float *d_tau = nullptr;
         int *d_info = nullptr;
 
@@ -161,13 +169,12 @@ namespace dr_bcg
         size_t lwork_geqrf_h = 0;
         void *h_work = nullptr;
 
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * m * n));
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_tau), sizeof(float) * tau.size()));
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
 
-        CUDA_CHECK(cudaMemcpy(d_A, A, sizeof(float) * m * n, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(Q, A, sizeof(float) * m * n, cudaMemcpyHostToDevice));
 
-        CUSOLVER_CHECK(cusolverDnXgeqrf_bufferSize(cusolverH, params, m, n, CUDA_R_32F, d_A,
+        CUSOLVER_CHECK(cusolverDnXgeqrf_bufferSize(cusolverH, params, m, n, CUDA_R_32F, Q,
                                                    m, CUDA_R_32F, d_tau,
                                                    CUDA_R_32F, &lwork_geqrf_d,
                                                    &lwork_geqrf_h));
@@ -183,14 +190,14 @@ namespace dr_bcg
             }
         }
 
-        CUSOLVER_CHECK(cusolverDnXgeqrf(cusolverH, params, m, n, CUDA_R_32F, d_A,
+        CUSOLVER_CHECK(cusolverDnXgeqrf(cusolverH, params, m, n, CUDA_R_32F, Q,
                                         m, CUDA_R_32F, d_tau,
                                         CUDA_R_32F, d_work, lwork_geqrf_d, h_work,
                                         lwork_geqrf_h, d_info));
         free(h_work); // No longer needed
 
         // Copy R to host (stored in upper triangular)
-        CUDA_CHECK(cudaMemcpy(R, d_A, sizeof(float) * n * n, cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(R, Q, sizeof(float) * n * n, cudaMemcpyDeviceToDevice));
 
         CUDA_CHECK(cudaMemcpy(tau.data(), d_tau, sizeof(float) * tau.size(), cudaMemcpyDeviceToHost));
 
@@ -203,13 +210,9 @@ namespace dr_bcg
 
         // Explicitly compute Q
         int lwork_orgqr = 0;
-        CUSOLVER_CHECK(cusolverDnSorgqr_bufferSize(cusolverH, m, n, k, d_A, m, d_tau, &lwork_orgqr));
-        CUSOLVER_CHECK(cusolverDnSorgqr(cusolverH, m, n, k, d_A, m, d_tau, reinterpret_cast<float *>(d_work), lwork_orgqr, d_info));
+        CUSOLVER_CHECK(cusolverDnSorgqr_bufferSize(cusolverH, m, n, k, Q, m, d_tau, &lwork_orgqr));
+        CUSOLVER_CHECK(cusolverDnSorgqr(cusolverH, m, n, k, Q, m, d_tau, reinterpret_cast<float *>(d_work), lwork_orgqr, d_info));
 
-        // Copy Q to host
-        CUDA_CHECK(cudaMemcpy(Q, d_A, sizeof(float) * m * n, cudaMemcpyDeviceToHost));
-
-        CUDA_CHECK(cudaFree(d_A));
         CUDA_CHECK(cudaFree(d_info));
         CUDA_CHECK(cudaFree(d_tau));
         CUDA_CHECK(cudaFree(d_work));
