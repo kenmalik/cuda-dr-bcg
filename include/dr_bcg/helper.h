@@ -33,7 +33,8 @@
         }                                                                            \
     } while (0)
 
-
 void fill_random(float *mat, const int rows, const int cols);
+
+void fill_spd(float *mat, const int n);
 
 void print_matrix(const float *mat, const int rows, const int cols);
