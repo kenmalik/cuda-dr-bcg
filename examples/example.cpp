@@ -6,8 +6,8 @@
 
 int main(int argc, char *argv[])
 {
-    constexpr int m = 16;
-    constexpr int n = 8;
+    constexpr int m = 8;
+    constexpr int n = 4;
     constexpr float tolerance = 0.001;
     constexpr int max_iterations = 25;
 
