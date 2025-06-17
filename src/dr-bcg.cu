@@ -32,18 +32,12 @@ namespace dr_bcg
         CUSOLVER_CHECK(cusolverDnCreateParams(&cusolverParams));
 
         // [w, sigma] = qr(R)
-        std::vector<float> w(m * n);
-        std::vector<float> sigma(n * n);
-
         float *d_w;
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_w), sizeof(float) * w.size()));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_w), sizeof(float) * m * n));
         float *d_sigma;
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_sigma), sizeof(float) * sigma.size()));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_sigma), sizeof(float) * n * n));
 
         qr_factorization(cusolverH, cusolverParams, d_w, d_sigma, m, n, d_R);
-
-        CUDA_CHECK(cudaMemcpy(w.data(), d_w, sizeof(float) * w.size(), cudaMemcpyDeviceToHost));
-        CUDA_CHECK(cudaMemcpy(sigma.data(), d_sigma, sizeof(float) * sigma.size(), cudaMemcpyDeviceToHost));
 
         int iterations;
 
