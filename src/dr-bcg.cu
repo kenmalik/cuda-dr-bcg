@@ -20,7 +20,10 @@ namespace dr_bcg
 
         // R = B - AX
         std::vector<float> R(m * n);
-        get_R(cublasH, R.data(), m, n, A, X, B);
+        float *d_R;
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_R), sizeof(float) * R.size()));
+        get_R(cublasH, d_R, m, n, A, X, B);
+        CUDA_CHECK(cudaMemcpy(R.data(), d_R, sizeof(float) * R.size(), cudaMemcpyDeviceToHost));
 
         cusolverDnHandle_t cusolverH = NULL;
         cusolverDnParams_t cusolverParams = NULL;
@@ -31,7 +34,18 @@ namespace dr_bcg
         // [w, sigma] = qr(R)
         std::vector<float> w(m * n);
         std::vector<float> sigma(n * n);
-        qr_factorization(cusolverH, cusolverParams, w.data(), sigma.data(), m, n, R.data());
+
+        float *d_w;
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_w), sizeof(float) * w.size()));
+        CUDA_CHECK(cudaMemcpy(d_w, w.data(), sizeof(float) * w.size(), cudaMemcpyHostToDevice));
+        float *d_sigma;
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_sigma), sizeof(float) * sigma.size()));
+        CUDA_CHECK(cudaMemcpy(d_sigma, sigma.data(), sizeof(float) * sigma.size(), cudaMemcpyHostToDevice));
+
+        qr_factorization(cusolverH, cusolverParams, d_w, d_sigma, m, n, d_R);
+
+        CUDA_CHECK(cudaMemcpy(w.data(), d_w, sizeof(float) * w.size(), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(sigma.data(), d_sigma, sizeof(float) * sigma.size(), cudaMemcpyDeviceToHost));
 
         std::vector<float> s = std::move(w);
 
@@ -51,18 +65,29 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(d_A, A, sizeof(float) * m * m, cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(d_s, s.data(), sizeof(float) * m * n, cudaMemcpyHostToDevice));
 
+        float *d_X;
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * m * n));
+        CUDA_CHECK(cudaMemcpy(d_X, X, sizeof(float) * m * n, cudaMemcpyHostToDevice));
+
         for (iterations = 1; iterations < 2; iterations++)
         {
             // xi = (s' * A * s)^-1
             quadratic_form(cublasH, m, n, alpha, d_s, d_A, beta, d_temp, d_xi);
             invert_spd(cusolverH, cusolverParams, d_xi, n);
 
-            // DEBUG
-            std::vector<float> h_xi(n * n);
-            CUDA_CHECK(cudaMemcpy(h_xi.data(), d_xi, sizeof(float) * n * n, cudaMemcpyDeviceToHost)); // DEBUG
-            std::cout << "(s^TAs)^-1:" << std::endl;
-            print_matrix(h_xi.data(), n, n);
+            // X = X + s * xi * sigma
+            next_X(cublasH, m, n, d_s, d_xi, d_temp, d_sigma, d_X);
+
+            std::vector<float> debug_X(m * n);
+            CUDA_CHECK(cudaMemcpy(debug_X.data(), d_X, sizeof(float) * m * n, cudaMemcpyDeviceToHost));
+            std::cout << "DEBUG: X" << std::endl;
+            print_matrix(debug_X.data(), m, n);
         }
+
+        CUDA_CHECK(cudaFree(d_R));
+        CUDA_CHECK(cudaFree(d_w));
+        CUDA_CHECK(cudaFree(d_sigma));
+        CUDA_CHECK(cudaFree(d_X));
 
         CUDA_CHECK(cudaFree(d_A));
         CUDA_CHECK(cudaFree(d_s));
@@ -73,6 +98,21 @@ namespace dr_bcg
         CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
 
         return iterations;
+    }
+
+    /// @brief Calculates X_{i+1} = X_{i} + s * xi * sigma
+    /// @param d_X (device memory pointer) X_{i}. Result is overwritten to pointed location
+    void next_X(cublasHandle_t cublasH, const int m, const int n, float *d_s, float *d_xi, float *d_temp, float *d_sigma, float *d_X)
+    {
+        float alpha = 1;
+        float beta = 0;
+        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, n,
+                                    &alpha, d_s, m, d_xi, n,
+                                    &beta, d_temp, m));
+        beta = 1;
+        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, n,
+                                    &alpha, d_temp, m, d_sigma, n,
+                                    &beta, d_X, m));
     }
 
     /// @brief Compute y = x^T * A * x
@@ -90,18 +130,16 @@ namespace dr_bcg
 
     // R = B - AX as GEMM:
     // R = -1.0 * AX + R where R initially contains B
-    void get_R(cublasHandle_t &cublasH, float *h_R, const int m, const int n, const float *A, const float *X, const float *B)
+    void get_R(cublasHandle_t &cublasH, float *d_R, const int m, const int n, const float *A, const float *X, const float *B)
     {
         constexpr float alpha = -1;
         constexpr float beta = 1;
 
         float *d_A = nullptr;
         float *d_X = nullptr;
-        float *d_R = nullptr;
 
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * m * m));
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * m * n));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_R), sizeof(float) * m * n));
 
         CUDA_CHECK(cudaMemcpy(d_A, A, sizeof(float) * m * m, cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(d_X, X, sizeof(float) * m * n, cudaMemcpyHostToDevice));
@@ -112,11 +150,8 @@ namespace dr_bcg
                                     &alpha, d_A, m, d_X, m,
                                     &beta, d_R, m));
 
-        CUDA_CHECK(cudaMemcpy(h_R, d_R, sizeof(float) * m * n, cudaMemcpyDeviceToHost));
-
         CUDA_CHECK(cudaFree(d_A));
         CUDA_CHECK(cudaFree(d_X));
-        CUDA_CHECK(cudaFree(d_R));
     }
 
     void qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *Q, float *R, const int m, const int n, const float *A)
@@ -125,7 +160,6 @@ namespace dr_bcg
         std::vector<float> tau(k, 0);
         int info = 0;
 
-        float *d_A = nullptr;
         float *d_tau = nullptr;
         int *d_info = nullptr;
 
@@ -134,13 +168,12 @@ namespace dr_bcg
         size_t lwork_geqrf_h = 0;
         void *h_work = nullptr;
 
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * m * n));
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_tau), sizeof(float) * tau.size()));
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
 
-        CUDA_CHECK(cudaMemcpy(d_A, A, sizeof(float) * m * n, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(Q, A, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
 
-        CUSOLVER_CHECK(cusolverDnXgeqrf_bufferSize(cusolverH, params, m, n, CUDA_R_32F, d_A,
+        CUSOLVER_CHECK(cusolverDnXgeqrf_bufferSize(cusolverH, params, m, n, CUDA_R_32F, Q,
                                                    m, CUDA_R_32F, d_tau,
                                                    CUDA_R_32F, &lwork_geqrf_d,
                                                    &lwork_geqrf_h));
@@ -156,14 +189,13 @@ namespace dr_bcg
             }
         }
 
-        CUSOLVER_CHECK(cusolverDnXgeqrf(cusolverH, params, m, n, CUDA_R_32F, d_A,
+        CUSOLVER_CHECK(cusolverDnXgeqrf(cusolverH, params, m, n, CUDA_R_32F, Q,
                                         m, CUDA_R_32F, d_tau,
                                         CUDA_R_32F, d_work, lwork_geqrf_d, h_work,
                                         lwork_geqrf_h, d_info));
         free(h_work); // No longer needed
 
-        // Copy R to host (stored in upper triangular)
-        CUDA_CHECK(cudaMemcpy(R, d_A, sizeof(float) * n * n, cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(R, Q, sizeof(float) * n * n, cudaMemcpyDeviceToDevice));
 
         CUDA_CHECK(cudaMemcpy(tau.data(), d_tau, sizeof(float) * tau.size(), cudaMemcpyDeviceToHost));
 
@@ -176,20 +208,16 @@ namespace dr_bcg
 
         // Explicitly compute Q
         int lwork_orgqr = 0;
-        CUSOLVER_CHECK(cusolverDnSorgqr_bufferSize(cusolverH, m, n, k, d_A, m, d_tau, &lwork_orgqr));
-        CUSOLVER_CHECK(cusolverDnSorgqr(cusolverH, m, n, k, d_A, m, d_tau, reinterpret_cast<float *>(d_work), lwork_orgqr, d_info));
+        CUSOLVER_CHECK(cusolverDnSorgqr_bufferSize(cusolverH, m, n, k, Q, m, d_tau, &lwork_orgqr));
+        CUSOLVER_CHECK(cusolverDnSorgqr(cusolverH, m, n, k, Q, m, d_tau, reinterpret_cast<float *>(d_work), lwork_orgqr, d_info));
 
-        // Copy Q to host
-        CUDA_CHECK(cudaMemcpy(Q, d_A, sizeof(float) * m * n, cudaMemcpyDeviceToHost));
-
-        CUDA_CHECK(cudaFree(d_A));
         CUDA_CHECK(cudaFree(d_info));
         CUDA_CHECK(cudaFree(d_tau));
         CUDA_CHECK(cudaFree(d_work));
     }
 
     /// @brief Computes the inverse of a matrix using Cholesky factorization
-    /// @param A (device memory pointer) the symmetric positive definite matrix to invert. Answer is overwritten to pointed location.
+    /// @param A (device memory pointer) the symmetric positive definite matrix to invert. Result is overwritten to pointed location.
     void invert_spd(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *A, const int64_t n)
     {
         size_t workspaceInBytesOnDevice = 0;
@@ -231,7 +259,8 @@ namespace dr_bcg
         // TODO: Parallelize this
         std::vector<float> I(n * n, 0);
         float *d_I = nullptr;
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < n; i++)
+        {
             I.at(i * n + i) = 1;
         }
 
@@ -240,9 +269,9 @@ namespace dr_bcg
 
         CUSOLVER_CHECK(cusolverDnXpotrs(
             cusolverH, params, CUBLAS_FILL_MODE_LOWER,
-            n, n, CUDA_R_32F, A, n, CUDA_R_32F, d_I, n, d_info
-        ));
-        if (0 > info) {
+            n, n, CUDA_R_32F, A, n, CUDA_R_32F, d_I, n, d_info));
+        if (0 > info)
+        {
             std::fprintf(stderr, "%d-th parameter is wrong \n", -info);
             exit(1);
         }

@@ -2,13 +2,14 @@
 #include <cublas_v2.h>
 #include "dr_bcg/helper.h"
 
+/// @brief Prints a matrix stored in column-major order
 void print_matrix(const float *mat, const int rows, const int cols)
 {
     for (int i = 0; i < rows; i++)
     {
         for (int j = 0; j < cols; j++)
         {
-            printf("%6.3f ", mat[i * cols + j]);
+            printf("%6.3f ", mat[j * cols + i]);
         }
         std::cout << std::endl;
     }
