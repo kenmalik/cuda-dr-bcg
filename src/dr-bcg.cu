@@ -69,6 +69,16 @@ namespace dr_bcg
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * m * n));
         CUDA_CHECK(cudaMemcpy(d_X, X, sizeof(float) * m * n, cudaMemcpyHostToDevice));
 
+        float B1_norm;
+        float *d_B1 = nullptr;
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_B1), sizeof(float) * m));
+        CUDA_CHECK(cudaMemcpy(d_B1, B, sizeof(float) * m, cudaMemcpyHostToDevice));
+        CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, d_B1, 1, &B1_norm));
+        CUDA_CHECK(cudaFree(d_B1));
+
+        float *d_residual = nullptr;
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_residual), sizeof(float) * m));
+
         for (iterations = 1; iterations < 2; iterations++)
         {
             // xi = (s' * A * s)^-1
@@ -78,12 +88,25 @@ namespace dr_bcg
             // X = X + s * xi * sigma
             next_X(cublasH, m, n, d_s, d_xi, d_temp, d_sigma, d_X);
 
-            std::vector<float> debug_X(m * n);
-            CUDA_CHECK(cudaMemcpy(debug_X.data(), d_X, sizeof(float) * m * n, cudaMemcpyDeviceToHost));
-            std::cout << "DEBUG: X" << std::endl;
-            print_matrix(debug_X.data(), m, n);
+            // std::vector<float> debug_X(m * n);
+            // CUDA_CHECK(cudaMemcpy(debug_X.data(), d_X, sizeof(float) * m * n, cudaMemcpyDeviceToHost));
+            // std::cout << "DEBUG: X" << std::endl;
+            // print_matrix(debug_X.data(), m, n);
+
+            // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
+            float relative_residual_norm;
+            residual(cublasH, d_residual, B, m, d_A, d_X);
+            CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, d_residual, 1, &relative_residual_norm));
+            relative_residual_norm /= B1_norm;
+
+            if (relative_residual_norm < tolerance) {
+                break;
+            } else {
+                std::cout << "Do another iteration" << std::endl;
+            }
         }
 
+        CUDA_CHECK(cudaFree(d_residual));
         CUDA_CHECK(cudaFree(d_R));
         CUDA_CHECK(cudaFree(d_w));
         CUDA_CHECK(cudaFree(d_sigma));
@@ -100,6 +123,25 @@ namespace dr_bcg
         return iterations;
     }
 
+    /// @brief Calculates residual with the following formula: B^(1) - A * X^(1)
+    /// @param cublasH cuBLAS handle
+    /// @param d_residual device workspace for calculation. Result is overwritten to pointed location
+    /// @param B pointer to host memory B
+    /// @param m the m-value (represents dimensions of square matrix A and length of X and B)
+    /// @param d_A pointer to device memory A
+    /// @param d_X pointer to device memory X
+    void residual(cublasHandle_t cublasH, float *d_residual, const float *B, const int m,  float *d_A, float *d_X)
+    {
+        CUDA_CHECK(cudaMemcpy(d_residual, B, sizeof(float) * m, cudaMemcpyHostToDevice));
+
+        float alpha = -1;
+        float beta = 1;
+        CUBLAS_CHECK(cublasSgemv_v2(
+            cublasH, CUBLAS_OP_N, m, m,
+            &alpha, d_A, m, d_X, 1,
+            &beta, d_residual, 1));
+    }
+    
     /// @brief Calculates X_{i+1} = X_{i} + s * xi * sigma
     /// @param d_X (device memory pointer) X_{i}. Result is overwritten to pointed location
     void next_X(cublasHandle_t cublasH, const int m, const int n, float *d_s, float *d_xi, float *d_temp, float *d_sigma, float *d_X)
