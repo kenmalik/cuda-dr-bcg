@@ -9,7 +9,7 @@ void print_matrix(const float *mat, const int rows, const int cols)
     {
         for (int j = 0; j < cols; j++)
         {
-            printf("%6.3f ", mat[j * cols + i]);
+            printf("%6.3f ", mat[j * rows + i]);
         }
         std::cout << std::endl;
     }
@@ -21,7 +21,7 @@ void fill_random(float *mat, const int rows, const int cols)
     {
         for (int j = 0; j < cols; j++)
         {
-            mat[i * cols + j] = rand() % 100 / 100.0;
+            mat[i * cols + j] = std::rand() % 100 / 100.0;
         }
     }
 }

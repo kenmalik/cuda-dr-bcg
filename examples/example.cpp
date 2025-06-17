@@ -6,15 +6,14 @@
 
 int main(int argc, char *argv[])
 {
-    constexpr int m = 8;
-    constexpr int n = 4;
+    constexpr int m = 32;
+    constexpr int n = 8;
     constexpr float tolerance = 0.001;
-    constexpr int max_iterations = 25;
+    constexpr int max_iterations = 100;
 
     std::vector<float> A(m * m);
     fill_spd(A.data(), m);
-    std::vector<float> X(m * n);
-    fill_random(X.data(), m, n);
+    std::vector<float> X(m * n, 0);
     std::vector<float> B(m * n);
     fill_random(B.data(), m, n);
 
