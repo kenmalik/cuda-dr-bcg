@@ -271,7 +271,7 @@ TEST(DR_BCG, OutputCorrect)
     std::vector<float> B_out(m * n);
 
     // Operation
-    dr_bcg::dr_bcg(A.data(), m, n, X.data(), B_in.data(), convergance_tolerance, max_iterations);
+    dr_bcg::dr_bcg(A.data(), X.data(), B_in.data(), m, n, convergance_tolerance, max_iterations);
 
     // Test A * X = B
     cublasHandle_t cublasH;

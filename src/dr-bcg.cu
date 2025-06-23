@@ -70,10 +70,10 @@ namespace dr_bcg
 {
     int dr_bcg(
         const float *A,
-        const int m,
-        const int n,
         float *X,
         const float *B,
+        const int m,
+        const int n,
         const float tolerance,
         const int max_iterations)
     {

@@ -17,7 +17,7 @@ int main(int argc, char *argv[])
     std::vector<float> B(m * n);
     fill_random(B.data(), m, n);
 
-    int iterations = dr_bcg::dr_bcg(A.data(), m, n, X.data(), B.data(), tolerance, max_iterations);
+    int iterations = dr_bcg::dr_bcg(A.data(), X.data(), B.data(), m, n, tolerance, max_iterations);
 
     std::cout << "Solution X Final:" << std::endl;
     print_matrix(X.data(), m, n);
