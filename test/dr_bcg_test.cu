@@ -256,6 +256,8 @@ TEST(InvertSPD, OutputCorrect)
 
 TEST(DR_BCG, OutputCorrect)
 {
+    constexpr float check_tolerance = 0.01;
+
     constexpr int m = 32;
     constexpr int n = 8;
     constexpr float convergance_tolerance = 0.001;
@@ -264,37 +266,40 @@ TEST(DR_BCG, OutputCorrect)
     std::vector<float> A(m * m);
     fill_spd(A.data(), m);
     std::vector<float> X(m * n, 0);
-    std::vector<float> B(m * n);
-    fill_random(B.data(), m, n);
+    std::vector<float> B_in(m * n);
+    fill_random(B_in.data(), m, n);
+    std::vector<float> B_out(m * n);
 
-    int iterations = dr_bcg::dr_bcg(A.data(), m, n, X.data(), B.data(), convergance_tolerance, max_iterations);
-    std::cout << "Done in " << iterations << " iterations" << std::endl;
+    // Operation
+    dr_bcg::dr_bcg(A.data(), m, n, X.data(), B_in.data(), convergance_tolerance, max_iterations);
 
+    // Test A * X = B
     cublasHandle_t cublasH;
     CUBLAS_CHECK(cublasCreate_v2(&cublasH));
 
-    std::vector<float> B_check(m * n);
     float *d_A = nullptr;
     float *d_X = nullptr;
     float *d_B = nullptr;
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * A.size()));
+    CUDA_CHECK(cudaMemcpy(d_A, A.data(), sizeof(float) * A.size(), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * X.size()));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_B), sizeof(float) * B.size()));
+    CUDA_CHECK(cudaMemcpy(d_X, X.data(), sizeof(float) * X.size(), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_B), sizeof(float) * B_out.size()));
 
     constexpr float alpha = 1;
     constexpr float beta = 0;
     CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, m,
                                 &alpha, d_A, m, d_X, m,
                                 &beta, d_B, m));
+    CUDA_CHECK(cudaMemcpy(B_out.data(), d_B, sizeof(float) * B_out.size(), cudaMemcpyDeviceToHost));
 
-    constexpr float check_tolerance = 0.1;
-    CUDA_CHECK(cudaMemcpy(B_check.data(), d_B, sizeof(float) * B_check.size(), cudaMemcpyDeviceToHost));
-    for (int i = 0; i < B.size(); i++)
+    for (int i = 0; i < B_in.size(); i++)
     {
-        float diff = std::fabs(B_check.at(i) - B.at(i));
+        float diff = std::abs(B_out.at(i) - B_in.at(i));
         ASSERT_LT(diff, check_tolerance);
     }
 
+    // Free resources
     CUDA_CHECK(cudaFree(d_A));
     CUDA_CHECK(cudaFree(d_B));
     CUDA_CHECK(cudaFree(d_X));
