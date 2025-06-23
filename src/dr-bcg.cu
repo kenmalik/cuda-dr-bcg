@@ -316,6 +316,9 @@ namespace dr_bcg
     /// @param A (device memory pointer) the symmetric positive definite matrix to invert. Result is overwritten to pointed location.
     void invert_spd(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *d_A, const int n)
     {
+        std::cout << "Input" << std::endl;
+        print_device_matrix(d_A, n, n);
+
         size_t workspaceInBytesOnDevice = 0;
         void *d_work = nullptr;
         size_t workspaceInBytesOnHost = 0;
@@ -351,36 +354,32 @@ namespace dr_bcg
             std::fprintf(stderr, "%d-th parameter is wrong \n", -info);
             exit(1);
         }
+        CUDA_CHECK(cudaFree(d_work));
 
         std::cout << "Cholesky" << std::endl;
         print_device_matrix(d_A, n, n);
 
-        // TODO: Parallelize this
-        std::vector<float> I(n * n, 0);
-        float *d_I = nullptr;
-        for (int i = 0; i < n; i++)
-        {
-            I.at(i * n + i) = 1;
-        }
+        float *d_work_Spotri = nullptr;
+        int lwork_Spotri = 0;
+        info = 0;
+        CUSOLVER_CHECK(cusolverDnSpotri_bufferSize(cusolverH, CUBLAS_FILL_MODE_LOWER, n,
+                                                   d_A, n, &lwork_Spotri));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work_Spotri), lwork_Spotri));
+        CUSOLVER_CHECK(cusolverDnSpotri(cusolverH, CUBLAS_FILL_MODE_LOWER, n,
+                                        d_A, n, d_work_Spotri, lwork_Spotri, d_info));
 
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_I), sizeof(float) * n * n));
-        CUDA_CHECK(cudaMemcpy(d_I, I.data(), sizeof(float) * n * n, cudaMemcpyHostToDevice));
-
-        CUSOLVER_CHECK(cusolverDnXpotrs(cusolverH, params, CUBLAS_FILL_MODE_LOWER,
-                                        n, n, CUDA_R_32F, d_A, n, CUDA_R_32F, d_I, n, d_info));
+        CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
         {
             std::fprintf(stderr, "%d-th parameter is wrong \n", -info);
             exit(1);
         }
 
-        CUDA_CHECK(cudaMemcpy(d_A, d_I, sizeof(float) * n * n, cudaMemcpyDeviceToDevice));
-
         std::cout << "Inverted" << std::endl;
         print_device_matrix(d_A, n, n);
 
-        CUDA_CHECK(cudaFree(d_I));
+        CUDA_CHECK(cudaFree(d_work_Spotri));
+
         CUDA_CHECK(cudaFree(d_info));
-        CUDA_CHECK(cudaFree(d_work));
     }
 }
