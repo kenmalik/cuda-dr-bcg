@@ -287,7 +287,9 @@ namespace dr_bcg
                                         m, CUDA_R_32F, d_tau,
                                         CUDA_R_32F, d_work, lwork_geqrf_d, h_work,
                                         lwork_geqrf_h, d_info));
-        free(h_work); // No longer needed
+        if (h_work) {
+            free(h_work); // No longer needed
+        }
 
         const int max_R_col = std::min(m, n);
         for (int col = 0; col < max_R_col; col++)
