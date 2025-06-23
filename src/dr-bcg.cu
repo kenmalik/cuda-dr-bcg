@@ -314,7 +314,7 @@ namespace dr_bcg
 
     /// @brief Computes the inverse of a matrix using Cholesky factorization
     /// @param A (device memory pointer) the symmetric positive definite matrix to invert. Result is overwritten to pointed location.
-    void invert_spd(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *d_A, const int64_t n)
+    void invert_spd(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *d_A, const int n)
     {
         size_t workspaceInBytesOnDevice = 0;
         void *d_work = nullptr;
@@ -352,6 +352,9 @@ namespace dr_bcg
             exit(1);
         }
 
+        std::cout << "Cholesky" << std::endl;
+        print_device_matrix(d_A, n, n);
+
         // TODO: Parallelize this
         std::vector<float> I(n * n, 0);
         float *d_I = nullptr;
@@ -372,6 +375,9 @@ namespace dr_bcg
         }
 
         CUDA_CHECK(cudaMemcpy(d_A, d_I, sizeof(float) * n * n, cudaMemcpyDeviceToDevice));
+
+        std::cout << "Inverted" << std::endl;
+        print_device_matrix(d_A, n, n);
 
         CUDA_CHECK(cudaFree(d_I));
         CUDA_CHECK(cudaFree(d_info));
