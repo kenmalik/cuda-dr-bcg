@@ -1,5 +1,6 @@
 #include <iostream>
 #include <vector>
+#include <string>
 
 #include "dr_bcg/dr-bcg.h"
 #include "dr_bcg/helper.h"
@@ -77,15 +78,20 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(d.A, A, sizeof(float) * m * m, cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(d.X, X, sizeof(float) * m * n, cudaMemcpyHostToDevice));
 
-        // R = B - AX
+        // We don't include d_R in device buffers because it is only used once at the beginning
+        // of the algorithm.
         float *d_R;
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_R), sizeof(float) * m * n));
+
+        // R = B - AX
         get_R(cublasH, d_R, m, n, A, X, B);
 
         // [w, sigma] = qr(R)
         qr_factorization(cusolverH, cusolverParams, d.w, d.sigma, m, n, d_R);
-        CUDA_CHECK(cudaFree(d_R));
 
+        CUDA_CHECK(cudaFree(d_R)); // Never used later
+
+        // s = w
         CUDA_CHECK(cudaMemcpy(d.s, d.w, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
 
         float B1_norm;
@@ -157,6 +163,7 @@ namespace dr_bcg
 
         CUBLAS_CHECK(cublasDestroy_v2(cublasH));
         CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
+        CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
 
         return iterations;
     }
@@ -281,7 +288,10 @@ namespace dr_bcg
                                         m, CUDA_R_32F, d_tau,
                                         CUDA_R_32F, d_work, lwork_geqrf_d, h_work,
                                         lwork_geqrf_h, d_info));
-        free(h_work); // No longer needed
+        if (h_work)
+        {
+            free(h_work); // No longer needed
+        }
 
         const int max_R_col = std::min(m, n);
         for (int col = 0; col < max_R_col; col++)
@@ -292,8 +302,7 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
         {
-            std::printf("%d-th parameter is wrong \n", -info);
-            exit(1);
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
         }
 
         // Explicitly compute Q
@@ -351,8 +360,7 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
         {
-            std::fprintf(stderr, "%d-th parameter is wrong \n", -info);
-            exit(1);
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
         }
         CUDA_CHECK(cudaFree(d_work));
 
@@ -371,8 +379,7 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
         {
-            std::fprintf(stderr, "%d-th parameter is wrong \n", -info);
-            exit(1);
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
         }
 
         std::cout << "Inverted" << std::endl;
