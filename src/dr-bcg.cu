@@ -55,6 +55,17 @@ struct DeviceBuffer
     }
 };
 
+__global__ void symmetrize_matrix(float *A, const int n)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < col && row < n && col < n)
+    {
+        A[col * n + row] = A[row * n + col];
+    }
+}
+
 namespace dr_bcg
 {
     int dr_bcg(
@@ -325,9 +336,6 @@ namespace dr_bcg
     /// @param A (device memory pointer) the symmetric positive definite matrix to invert. Result is overwritten to pointed location.
     void invert_spd(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *d_A, const int n)
     {
-        std::cout << "Input" << std::endl;
-        print_device_matrix(d_A, n, n);
-
         size_t workspaceInBytesOnDevice = 0;
         void *d_work = nullptr;
         size_t workspaceInBytesOnHost = 0;
@@ -364,9 +372,6 @@ namespace dr_bcg
         }
         CUDA_CHECK(cudaFree(d_work));
 
-        std::cout << "Cholesky" << std::endl;
-        print_device_matrix(d_A, n, n);
-
         float *d_work_Spotri = nullptr;
         int lwork_Spotri = 0;
         info = 0;
@@ -382,8 +387,10 @@ namespace dr_bcg
             throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
         }
 
-        std::cout << "Inverted" << std::endl;
-        print_device_matrix(d_A, n, n);
+        constexpr int block_n = 16;
+        dim3 block_dim(block_n, block_n);
+        dim3 grid_dim((n + block_n - 1) / block_n, (n + block_n - 1) / block_n);
+        symmetrize_matrix<<<grid_dim, block_dim>>>(d_A, n);
 
         CUDA_CHECK(cudaFree(d_work_Spotri));
 
