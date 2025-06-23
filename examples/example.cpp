@@ -6,8 +6,8 @@
 
 int main(int argc, char *argv[])
 {
-    constexpr int m = 32;
-    constexpr int n = 8;
+    constexpr int m = 8;
+    constexpr int n = 4;
     constexpr float tolerance = 0.001;
     constexpr int max_iterations = 100;
 
@@ -26,6 +26,9 @@ int main(int argc, char *argv[])
     print_matrix(B.data(), m, n);
 
     dr_bcg::dr_bcg(A.data(), m, n, X.data(), B.data(), tolerance, max_iterations);
+
+    std::cout << "Solution X:" << std::endl;
+    print_matrix(X.data(), m, n);
 
     return 0;
 }
