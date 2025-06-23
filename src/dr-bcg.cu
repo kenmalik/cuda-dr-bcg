@@ -55,6 +55,17 @@ struct DeviceBuffer
     }
 };
 
+__global__ void symmetrize_matrix(float *A, const int n)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < col && row < n && col < n)
+    {
+        A[col * n + row] = A[row * n + col];
+    }
+}
+
 namespace dr_bcg
 {
     int dr_bcg(
@@ -359,21 +370,16 @@ namespace dr_bcg
         {
             throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
         }
+        CUDA_CHECK(cudaFree(d_work));
 
-        // TODO: Parallelize this
-        std::vector<float> I(n * n, 0);
-        float *d_I = nullptr;
-        for (int i = 0; i < n; i++)
-        {
-            I.at(i * n + i) = 1;
-        }
-
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_I), sizeof(float) * n * n));
-        CUDA_CHECK(cudaMemcpy(d_I, I.data(), sizeof(float) * n * n, cudaMemcpyHostToDevice));
-
+        float *d_work_Spotri = nullptr;
+        int lwork_Spotri = 0;
         info = 0;
-        CUSOLVER_CHECK(cusolverDnXpotrs(cusolverH, params, CUBLAS_FILL_MODE_LOWER,
-                                        n, n, CUDA_R_32F, d_A, n, CUDA_R_32F, d_I, n, d_info));
+        CUSOLVER_CHECK(cusolverDnSpotri_bufferSize(cusolverH, CUBLAS_FILL_MODE_LOWER, n,
+                                                   d_A, n, &lwork_Spotri));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work_Spotri), lwork_Spotri));
+        CUSOLVER_CHECK(cusolverDnSpotri(cusolverH, CUBLAS_FILL_MODE_LOWER, n,
+                                        d_A, n, d_work_Spotri, lwork_Spotri, d_info));
 
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
@@ -381,10 +387,13 @@ namespace dr_bcg
             throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
         }
 
-        CUDA_CHECK(cudaMemcpy(d_A, d_I, sizeof(float) * n * n, cudaMemcpyDeviceToDevice));
+        constexpr int block_n = 16;
+        dim3 block_dim(block_n, block_n);
+        dim3 grid_dim((n + block_n - 1) / block_n, (n + block_n - 1) / block_n);
+        symmetrize_matrix<<<grid_dim, block_dim>>>(d_A, n);
 
-        CUDA_CHECK(cudaFree(d_I));
+        CUDA_CHECK(cudaFree(d_work_Spotri));
+
         CUDA_CHECK(cudaFree(d_info));
-        CUDA_CHECK(cudaFree(d_work));
     }
 }
