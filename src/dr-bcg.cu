@@ -371,8 +371,11 @@ namespace dr_bcg
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_I), sizeof(float) * n * n));
         CUDA_CHECK(cudaMemcpy(d_I, I.data(), sizeof(float) * n * n, cudaMemcpyHostToDevice));
 
+        info = 0;
         CUSOLVER_CHECK(cusolverDnXpotrs(cusolverH, params, CUBLAS_FILL_MODE_LOWER,
                                         n, n, CUDA_R_32F, d_A, n, CUDA_R_32F, d_I, n, d_info));
+
+        CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
         {
             std::fprintf(stderr, "%d-th parameter is wrong \n", -info);
