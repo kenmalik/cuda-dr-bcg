@@ -112,9 +112,11 @@ namespace dr_bcg
         CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, d_B1, 1, &B1_norm));
         CUDA_CHECK(cudaFree(d_B1));
 
-        int iterations;
-        for (iterations = 1; iterations <= max_iterations; iterations++)
+        int iterations = 0;
+        while (iterations < max_iterations)
         {
+            iterations++;
+
             // xi = (s' * A * s)^-1
             quadratic_form(cublasH, m, n, d.s, d.A, d.temp, d.xi);
             invert_spd(cusolverH, cusolverParams, d.xi, n);
