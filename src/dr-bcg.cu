@@ -4,6 +4,56 @@
 #include "dr_bcg/dr-bcg.h"
 #include "dr_bcg/helper.h"
 
+// Device pointers for reused device buffers
+struct DeviceBuffer
+{
+    float *A = nullptr;
+    float *X = nullptr;
+    float *w = nullptr;
+    float *sigma = nullptr;
+    float *s = nullptr;
+    float *xi = nullptr;
+    float *zeta = nullptr;
+    float *temp = nullptr;
+    float *residual = nullptr;
+
+    DeviceBuffer(int m, int n)
+    {
+        allocate(m, n);
+    }
+
+    ~DeviceBuffer()
+    {
+        deallocate();
+    }
+
+    void allocate(int m, int n)
+    {
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&A), sizeof(float) * m * m));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&X), sizeof(float) * m * n));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&w), sizeof(float) * m * n));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&sigma), sizeof(float) * n * n));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&s), sizeof(float) * m * n));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&xi), sizeof(float) * n * n));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&zeta), sizeof(float) * n * n));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&temp), sizeof(float) * m * n));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&residual), sizeof(float) * m));
+    }
+
+    void deallocate()
+    {
+        CUDA_CHECK(cudaFree(A));
+        CUDA_CHECK(cudaFree(X));
+        CUDA_CHECK(cudaFree(w));
+        CUDA_CHECK(cudaFree(sigma));
+        CUDA_CHECK(cudaFree(s));
+        CUDA_CHECK(cudaFree(xi));
+        CUDA_CHECK(cudaFree(zeta));
+        CUDA_CHECK(cudaFree(temp));
+        CUDA_CHECK(cudaFree(residual));
+    }
+};
+
 namespace dr_bcg
 {
     int dr_bcg(
@@ -18,42 +68,25 @@ namespace dr_bcg
         cublasHandle_t cublasH;
         CUBLAS_CHECK(cublasCreate(&cublasH));
 
+        cusolverDnHandle_t cusolverH = NULL;
+        cusolverDnParams_t cusolverParams = NULL;
+        CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
+        CUSOLVER_CHECK(cusolverDnCreateParams(&cusolverParams));
+
+        DeviceBuffer d(m, n);
+        CUDA_CHECK(cudaMemcpy(d.A, A, sizeof(float) * m * m, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d.X, X, sizeof(float) * m * n, cudaMemcpyHostToDevice));
+
         // R = B - AX
         float *d_R;
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_R), sizeof(float) * m * n));
         get_R(cublasH, d_R, m, n, A, X, B);
 
-        cusolverDnHandle_t cusolverH = NULL;
-        cusolverDnParams_t cusolverParams = NULL;
-
-        CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
-        CUSOLVER_CHECK(cusolverDnCreateParams(&cusolverParams));
-
         // [w, sigma] = qr(R)
-        float *d_w;
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_w), sizeof(float) * m * n));
-        float *d_sigma;
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_sigma), sizeof(float) * n * n));
+        qr_factorization(cusolverH, cusolverParams, d.w, d.sigma, m, n, d_R);
+        CUDA_CHECK(cudaFree(d_R));
 
-        qr_factorization(cusolverH, cusolverParams, d_w, d_sigma, m, n, d_R);
-
-        int iterations;
-
-        float *d_A;
-        float *d_s;
-        float *d_temp;
-        float *d_xi;
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * m * m));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_s), sizeof(float) * m * n));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_temp), sizeof(float) * n * m));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_xi), sizeof(float) * n * n));
-
-        CUDA_CHECK(cudaMemcpy(d_A, A, sizeof(float) * m * m, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_s, d_w, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
-
-        float *d_X;
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * m * n));
-        CUDA_CHECK(cudaMemcpy(d_X, X, sizeof(float) * m * n, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d.s, d.w, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
 
         float B1_norm;
         float *d_B1 = nullptr;
@@ -62,25 +95,20 @@ namespace dr_bcg
         CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, d_B1, 1, &B1_norm));
         CUDA_CHECK(cudaFree(d_B1));
 
-        float *d_residual = nullptr;
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_residual), sizeof(float) * m));
-
-        float *d_zeta;
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_zeta), sizeof(float) * n * n));
-
+        int iterations;
         for (iterations = 1; iterations <= max_iterations; iterations++)
         {
             // xi = (s' * A * s)^-1
-            quadratic_form(cublasH, m, n, d_s, d_A, d_temp, d_xi);
-            invert_spd(cusolverH, cusolverParams, d_xi, n);
+            quadratic_form(cublasH, m, n, d.s, d.A, d.temp, d.xi);
+            invert_spd(cusolverH, cusolverParams, d.xi, n);
 
             // X = X + s * xi * sigma
-            next_X(cublasH, m, n, d_s, d_xi, d_temp, d_sigma, d_X);
+            next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, d.X);
 
             // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
             float relative_residual_norm;
-            residual(cublasH, d_residual, B, m, d_A, d_X);
-            CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, d_residual, 1, &relative_residual_norm));
+            residual(cublasH, d.residual, B, m, d.A, d.X);
+            CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, d.residual, 1, &relative_residual_norm));
             relative_residual_norm /= B1_norm;
 
             if (relative_residual_norm < tolerance)
@@ -93,51 +121,39 @@ namespace dr_bcg
                 float alpha = 1;
                 float beta = 0;
                 CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, m,
-                                            &alpha, d_A, m, d_s, m,
-                                            &beta, d_temp, m));
+                                            &alpha, d.A, m, d.s, m,
+                                            &beta, d.temp, m));
 
                 // w - temp * xi
                 alpha = -1;
                 beta = 1;
                 CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, n,
-                                            &alpha, d_temp, m, d_xi, n,
-                                            &beta, d_w, m));
+                                            &alpha, d.temp, m, d.xi, n,
+                                            &beta, d.w, m));
 
-                qr_factorization(cusolverH, cusolverParams, d_w, d_zeta, m, n, d_w);
+                qr_factorization(cusolverH, cusolverParams, d.w, d.zeta, m, n, d.w);
 
                 // temp = s * zeta'
                 alpha = 1;
                 CUBLAS_CHECK(cublasStrmm_v2(cublasH, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER,
                                             CUBLAS_OP_T, CUBLAS_DIAG_NON_UNIT, m, n,
-                                            &alpha, d_zeta, n, d_s, m, d_temp, m));
+                                            &alpha, d.zeta, n, d.s, m, d.temp, m));
 
                 // s = w + temp
                 beta = 1;
                 CUBLAS_CHECK(cublasSgeam(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n,
-                                         &alpha, d_w, m, &beta, d_temp, m, d_s, m));
+                                         &alpha, d.w, m, &beta, d.temp, m, d.s, m));
 
                 // sigma = zeta * sigma
                 beta = 0;
                 CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n,
-                                            &alpha, d_zeta, n, d_sigma, n,
-                                            &beta, d_temp, n));
-                CUDA_CHECK(cudaMemcpy(d_sigma, d_temp, sizeof(float) * n * n, cudaMemcpyDeviceToDevice));
+                                            &alpha, d.zeta, n, d.sigma, n,
+                                            &beta, d.temp, n));
+                CUDA_CHECK(cudaMemcpy(d.sigma, d.temp, sizeof(float) * n * n, cudaMemcpyDeviceToDevice));
             }
         }
 
-        CUDA_CHECK(cudaMemcpy(X, d_X, sizeof(float) * m * n, cudaMemcpyDeviceToHost));
-
-        CUDA_CHECK(cudaFree(d_zeta));
-        CUDA_CHECK(cudaFree(d_residual));
-        CUDA_CHECK(cudaFree(d_R));
-        CUDA_CHECK(cudaFree(d_w));
-        CUDA_CHECK(cudaFree(d_sigma));
-        CUDA_CHECK(cudaFree(d_X));
-
-        CUDA_CHECK(cudaFree(d_A));
-        CUDA_CHECK(cudaFree(d_s));
-        CUDA_CHECK(cudaFree(d_temp));
-        CUDA_CHECK(cudaFree(d_xi));
+        CUDA_CHECK(cudaMemcpy(X, d.X, sizeof(float) * m * n, cudaMemcpyDeviceToHost));
 
         CUBLAS_CHECK(cublasDestroy_v2(cublasH));
         CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
