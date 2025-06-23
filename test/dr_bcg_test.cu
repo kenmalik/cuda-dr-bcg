@@ -3,7 +3,7 @@
 
 #include <gtest/gtest.h>
 
-#include "dr_bcg/dr-bcg.h"
+#include "dr_bcg/dr_bcg.h"
 #include "dr_bcg/helper.h"
 
 TEST(QuadraticForm, ScalarOutputCorrect)

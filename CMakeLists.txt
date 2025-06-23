@@ -10,7 +10,7 @@ enable_language(CUDA)
 set(CMAKE_CUDA_ARCHITECTURES 80)
 
 add_library(dr_bcg
-    "src/dr-bcg.cu"
+    "src/dr_bcg.cu"
     "src/helper.cu"
 )
 target_include_directories(dr_bcg PUBLIC "include")
