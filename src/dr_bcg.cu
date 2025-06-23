@@ -2,32 +2,50 @@
 #include <vector>
 #include <string>
 
-#include "dr_bcg/dr-bcg.h"
+#include "dr_bcg/dr_bcg.h"
 #include "dr_bcg/helper.h"
 
-// Device pointers for reused device buffers
+/**
+ * @brief Device pointers for reused device buffers.
+ *
+ * This struct manages device memory for all buffers used in the DR-BCG algorithm.
+ * It handles allocation and deallocation of all required device arrays.
+ */
 struct DeviceBuffer
 {
-    float *A = nullptr;
-    float *X = nullptr;
-    float *w = nullptr;
-    float *sigma = nullptr;
-    float *s = nullptr;
-    float *xi = nullptr;
-    float *zeta = nullptr;
-    float *temp = nullptr;
-    float *residual = nullptr;
+    float *A = nullptr;        ///< Device pointer for matrix A (m x m)
+    float *X = nullptr;        ///< Device pointer for matrix X (m x n)
+    float *w = nullptr;        ///< Device pointer for matrix w (m x n)
+    float *sigma = nullptr;    ///< Device pointer for matrix sigma (n x n)
+    float *s = nullptr;        ///< Device pointer for matrix s (m x n)
+    float *xi = nullptr;       ///< Device pointer for matrix xi (n x n)
+    float *zeta = nullptr;     ///< Device pointer for matrix zeta (n x n)
+    float *temp = nullptr;     ///< Device pointer for temporary matrix (m x n)
+    float *residual = nullptr; ///< Device pointer for residual vector (m)
 
+    /**
+     * @brief Constructor. Allocates all device buffers.
+     * @param m Number of rows
+     * @param n Number of columns
+     */
     DeviceBuffer(int m, int n)
     {
         allocate(m, n);
     }
 
+    /**
+     * @brief Destructor. Frees all allocated device memory.
+     */
     ~DeviceBuffer()
     {
         deallocate();
     }
 
+    /**
+     * @brief Allocates device memory for all buffers.
+     * @param m Number of rows
+     * @param n Number of columns
+     */
     void allocate(int m, int n)
     {
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&A), sizeof(float) * m * m));
@@ -41,6 +59,9 @@ struct DeviceBuffer
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&residual), sizeof(float) * m));
     }
 
+    /**
+     * @brief Deallocates all device memory.
+     */
     void deallocate()
     {
         CUDA_CHECK(cudaFree(A));
@@ -55,6 +76,13 @@ struct DeviceBuffer
     }
 };
 
+/**
+ * @brief CUDA kernel to symmetrize a square matrix in-place.
+ *
+ * Copies the lower triangle to the upper triangle to ensure symmetry.
+ * @param A Pointer to device matrix (n x n)
+ * @param n Matrix dimension
+ */
 __global__ void symmetrize_matrix(float *A, const int n)
 {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -68,12 +96,26 @@ __global__ void symmetrize_matrix(float *A, const int n)
 
 namespace dr_bcg
 {
+    /**
+     * @brief Main DR-BCG solver routine.
+     *
+     * Solves the block linear system AX = B using the DR-BCG algorithm.
+     *
+     * @param A Host pointer to input matrix A (m x m)
+     * @param X Host pointer to initial guess X (m x n), overwritten with solution
+     * @param B Host pointer to right-hand side B (m x n)
+     * @param m Number of rows
+     * @param n Number of columns
+     * @param tolerance Relative residual tolerance for convergence
+     * @param max_iterations Maximum number of iterations
+     * @return Number of iterations performed
+     */
     int dr_bcg(
         const float *A,
-        const int m,
-        const int n,
         float *X,
         const float *B,
+        const int m,
+        const int n,
         const float tolerance,
         const int max_iterations)
     {
@@ -112,9 +154,11 @@ namespace dr_bcg
         CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, d_B1, 1, &B1_norm));
         CUDA_CHECK(cudaFree(d_B1));
 
-        int iterations;
-        for (iterations = 1; iterations <= max_iterations; iterations++)
+        int iterations = 0;
+        while (iterations < max_iterations)
         {
+            iterations++;
+
             // xi = (s' * A * s)^-1
             quadratic_form(cublasH, m, n, d.s, d.A, d.temp, d.xi);
             invert_spd(cusolverH, cusolverParams, d.xi, n);
@@ -179,13 +223,16 @@ namespace dr_bcg
         return iterations;
     }
 
-    /// @brief Calculates residual with the following formula: B^(1) - A * X^(1)
-    /// @param cublasH cuBLAS handle
-    /// @param d_residual device workspace for calculation. Result is overwritten to pointed location
-    /// @param B pointer to host memory B
-    /// @param m the m-value (represents dimensions of square matrix A and length of X and B)
-    /// @param d_A pointer to device memory A
-    /// @param d_X pointer to device memory X
+    /**
+     * @brief Calculates residual with the following formula: B^(1) - A * X^(1)
+     *
+     * @param cublasH cuBLAS handle
+     * @param d_residual Device workspace for calculation. Result is overwritten to pointed location.
+     * @param B Pointer to host memory B
+     * @param m The m-value (represents dimensions of square matrix A and length of X and B)
+     * @param d_A Pointer to device memory A
+     * @param d_X Pointer to device memory X
+     */
     void residual(cublasHandle_t &cublasH, float *d_residual, const float *B, const int m, const float *d_A, const float *d_X)
     {
         CUDA_CHECK(cudaMemcpy(d_residual, B, sizeof(float) * m, cudaMemcpyHostToDevice));
@@ -198,8 +245,18 @@ namespace dr_bcg
             &beta, d_residual, 1));
     }
 
-    /// @brief Calculates X_{i+1} = X_{i} + s * xi * sigma
-    /// @param d_X (device memory pointer) X_{i}. Result is overwritten to pointed location
+    /**
+     * @brief Calculates next X guess with the following formula: X_{i+1} = X_{i} + s * xi * sigma
+     *
+     * @param cublasH cuBLAS handle
+     * @param m Number of rows
+     * @param n Number of columns
+     * @param d_s Device pointer to s (m x n)
+     * @param d_xi Device pointer to xi (n x n)
+     * @param d_temp Device pointer to temporary buffer (m x n)
+     * @param d_sigma Device pointer to sigma (n x n)
+     * @param d_X Device pointer to X (m x n). Result is overwritten to pointed location.
+     */
     void next_X(cublasHandle_t &cublasH, const int m, const int n, const float *d_s, const float *d_xi, float *d_temp, const float *d_sigma, float *d_X)
     {
         constexpr float alpha = 1;
@@ -211,7 +268,17 @@ namespace dr_bcg
                                     &beta, d_X, m));
     }
 
-    /// @brief Compute y = x^T * A * x
+    /**
+     * @brief Compute y = x^T * A * x
+     *
+     * @param cublasH cuBLAS handle
+     * @param m Number of rows
+     * @param n Number of columns
+     * @param d_x Device pointer to x (n x m)
+     * @param d_A Device pointer to A (m x m)
+     * @param d_work Device pointer to workspace
+     * @param d_y Device pointer to result y (n x n)
+     */
     void quadratic_form(cublasHandle_t &cublasH, const int m, const int n,
                         const float *d_x, const float *d_A,
                         float *d_work, float *d_y)
@@ -226,8 +293,17 @@ namespace dr_bcg
                                     &beta, d_y, n));
     }
 
-    // R = B - AX as GEMM:
-    // R = -1.0 * AX + R where R initially contains B
+    /**
+     * @brief Computes R = B - AX as GEMM: R = -1.0 * AX + R where R initially contains B.
+     *
+     * @param cublasH cuBLAS handle
+     * @param d_R Device pointer to result R (m x n)
+     * @param m Number of rows
+     * @param n Number of columns
+     * @param A Host pointer to A (m x m)
+     * @param X Host pointer to X (m x n)
+     * @param B Host pointer to B (m x n)
+     */
     void get_R(cublasHandle_t &cublasH, float *d_R, const int m, const int n, const float *A, const float *X, const float *B)
     {
         constexpr float alpha = -1;
@@ -252,15 +328,18 @@ namespace dr_bcg
         CUDA_CHECK(cudaFree(d_X));
     }
 
-    /// @brief Computes the QR factorization of matrix A
-    /// @param cusolverH cuSOLVER handle
-    /// @param params params for the cuSOLVER handle
-    /// @param Q pointer to device memory to store Q result in
-    /// @param R pointer to device memory to store R result in. Note that the lower triangular still contains householder vectors and must be handled accordingly
-    /// (e.g. by using trmm in future multiplications using the R factor)
-    /// @param m m-dimension (leading dimension) of A
-    /// @param n n-dimension (second dimension) of A
-    /// @param A the matrix to factorize
+    /**
+     * @brief Computes the QR factorization of matrix A.
+     *
+     * @param cusolverH cuSOLVER handle
+     * @param params Params for the cuSOLVER handle
+     * @param Q Pointer to device memory to store Q result in
+     * @param R Pointer to device memory to store R result in. Note that the lower triangular still contains householder vectors and must be handled accordingly
+     * (e.g. by using trmm in future multiplications using the R factor)
+     * @param m m-dimension (leading dimension) of A
+     * @param n n-dimension (second dimension) of A
+     * @param A The matrix to factorize (device pointer)
+     */
     void qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *Q, float *R, const int m, const int n, const float *A)
     {
         int k = std::min(m, n);
@@ -332,8 +411,14 @@ namespace dr_bcg
         CUDA_CHECK(cudaFree(d_work));
     }
 
-    /// @brief Computes the inverse of a matrix using Cholesky factorization
-    /// @param A (device memory pointer) the symmetric positive definite matrix to invert. Result is overwritten to pointed location.
+    /**
+     * @brief Computes the inverse of a matrix using Cholesky factorization.
+     *
+     * @param cusolverH cuSOLVER handle
+     * @param params cuSOLVER params
+     * @param d_A Device pointer to the symmetric positive definite matrix to invert. Result is overwritten to pointed location.
+     * @param n Matrix dimension
+     */
     void invert_spd(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *d_A, const int n)
     {
         size_t workspaceInBytesOnDevice = 0;
