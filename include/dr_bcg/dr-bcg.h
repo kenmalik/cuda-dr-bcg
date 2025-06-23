@@ -5,7 +5,7 @@
 
 namespace dr_bcg
 {
-    int dr_bcg(float *A, const int m, const int n, const float *X, const float *B, const float tolerance, const int max_iterations);
+    int dr_bcg(const float *A, const int m, const int n, float *X, const float *B, const float tolerance, const int max_iterations);
 
     void residual(cublasHandle_t &cublasH, float *d_residual, const float *B, const int m,  const float *d_A, const float *d_X);
 

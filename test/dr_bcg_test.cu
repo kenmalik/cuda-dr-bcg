@@ -1,4 +1,5 @@
 #include <vector>
+#include <cmath>
 
 #include <gtest/gtest.h>
 
@@ -127,4 +128,51 @@ TEST(Residual, OutputCorrect)
 
     std::vector<float> expected = {-29, -34, -39};
     ASSERT_EQ(h_residual, expected);
+}
+
+TEST(DR_BCG, OutputCorrect)
+{
+    constexpr int m = 32;
+    constexpr int n = 8;
+    constexpr float convergance_tolerance = 0.001;
+    constexpr int max_iterations = 100;
+
+    std::vector<float> A(m * m);
+    fill_spd(A.data(), m);
+    std::vector<float> X(m * n, 0);
+    std::vector<float> B(m * n);
+    fill_random(B.data(), m, n);
+
+    int iterations = dr_bcg::dr_bcg(A.data(), m, n, X.data(), B.data(), convergance_tolerance, max_iterations);
+    std::cout << "Done in " << iterations << " iterations" << std::endl;
+
+    cublasHandle_t cublasH;
+    CUBLAS_CHECK(cublasCreate_v2(&cublasH));
+
+    std::vector<float> B_check(m * n);
+    float *d_A = nullptr;
+    float *d_X = nullptr;
+    float *d_B = nullptr;
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * A.size()));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * X.size()));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_B), sizeof(float) * B.size()));
+
+    constexpr float alpha = 1;
+    constexpr float beta = 0;
+    CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, m,
+                                &alpha, d_A, m, d_X, m,
+                                &beta, d_B, m));
+
+    constexpr float check_tolerance = 0.1;
+    CUDA_CHECK(cudaMemcpy(B_check.data(), d_B, sizeof(float) * B_check.size(), cudaMemcpyDeviceToHost));
+    for (int i = 0; i < B.size(); i++) {
+        float diff = std::fabs(B_check.at(i) - B.at(i));
+        ASSERT_LT(diff, check_tolerance);
+    }
+
+    CUDA_CHECK(cudaFree(d_A));
+    CUDA_CHECK(cudaFree(d_B));
+    CUDA_CHECK(cudaFree(d_X));
+
+    CUBLAS_CHECK(cublasDestroy_v2(cublasH));
 }
