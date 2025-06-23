@@ -91,6 +91,66 @@ TEST(QuadraticForm, MatrixOutputCorrect)
     ASSERT_EQ(h_y, expected);
 }
 
+TEST(QR_Factorization, OutputCorrect)
+{
+    constexpr float tolerance = 0.001;
+
+    constexpr int m = 8;
+    constexpr int n = 4;
+
+    cublasHandle_t cublasH;
+    CUBLAS_CHECK(cublasCreate_v2(&cublasH));
+
+    cusolverDnHandle_t cusolverH;
+    cusolverDnParams_t cusolverParams;
+    CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
+    CUSOLVER_CHECK(cusolverDnCreateParams(&cusolverParams));
+
+    float *d_A = nullptr;
+    float *d_Q = nullptr;
+    float *d_R = nullptr;
+
+    std::vector<float> h_A_in(m * n);
+    fill_random(h_A_in.data(), m, n);
+    std::vector<float> h_A_out(m * n);
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * m * n));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_Q), sizeof(float) * m * n));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_R), sizeof(float) * n * n));
+
+    CUDA_CHECK(cudaMemcpy(d_A, h_A_in.data(), sizeof(float) * h_A_in.size(), cudaMemcpyHostToDevice));
+
+    // Operation
+    dr_bcg::qr_factorization(cusolverH, cusolverParams, d_Q, d_R, m, n, d_A);
+
+    // Test A = Q * R
+    CUDA_CHECK(cudaMemset(d_A, 0, sizeof(float) * m * n));
+
+    constexpr float alpha = 1;
+    constexpr float beta = 0;
+    CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, n,
+                                &alpha, d_Q, m, d_R, n,
+                                &beta, d_A, m));
+
+    CUDA_CHECK(cudaMemcpy(h_A_out.data(), d_A, sizeof(float) * h_A_out.size(), cudaMemcpyDeviceToHost));
+
+    for (int i = 0; i < h_A_in.size(); i++)
+    {
+        float diff = std::abs(h_A_in.at(i) - h_A_out.at(i));
+        ASSERT_LT(diff, tolerance);
+    }
+
+    // Free resources
+    CUDA_CHECK(cudaFree(d_A));
+    CUDA_CHECK(cudaFree(d_Q));
+    CUDA_CHECK(cudaFree(d_R));
+
+    CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
+    CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
+
+    CUBLAS_CHECK(cublasDestroy_v2(cublasH));
+}
+
 TEST(Residual, OutputCorrect)
 {
     constexpr int m = 3;
@@ -130,6 +190,70 @@ TEST(Residual, OutputCorrect)
     ASSERT_EQ(h_residual, expected);
 }
 
+TEST(InvertSPD, OutputCorrect)
+{
+    constexpr float tolerance = 0.001;
+
+    constexpr int m = 8;
+
+    cublasHandle_t cublasH;
+    CUBLAS_CHECK(cublasCreate_v2(&cublasH));
+
+    cusolverDnHandle_t cusolverH;
+    cusolverDnParams_t cusolverParams;
+    CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
+    CUSOLVER_CHECK(cusolverDnCreateParams(&cusolverParams));
+
+    float *d_A = nullptr;
+    float *d_A_inv = nullptr;
+    float *d_I = nullptr;
+
+    std::vector<float> h_A_in(m * m);
+    fill_spd(h_A_in.data(), m);
+    std::vector<float> h_I_out(m * m);
+
+    std::vector<float> I(m * m, 0);
+    for (int i = 0; i < m; i++)
+    {
+        I.at(i * m + i) = 1;
+    }
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * m * m));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A_inv), sizeof(float) * m * m));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_I), sizeof(float) * m * m));
+
+    CUDA_CHECK(cudaMemcpy(d_A, h_A_in.data(), sizeof(float) * h_A_in.size(), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_A_inv, h_A_in.data(), sizeof(float) * h_A_in.size(), cudaMemcpyHostToDevice));
+
+    // Operation
+    dr_bcg::invert_spd(cusolverH, cusolverParams, d_A, m);
+
+    // Test A * A_inv = I
+    constexpr float alpha = 1;
+    constexpr float beta = 0;
+    CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, m, m,
+                                &alpha, d_A, m, d_A_inv, m,
+                                &beta, d_I, m));
+
+    CUDA_CHECK(cudaMemcpy(h_I_out.data(), d_I, sizeof(float) * h_I_out.size(), cudaMemcpyDeviceToHost));
+
+    for (int i = 0; i < h_A_in.size(); i++)
+    {
+        float diff = std::abs(I.at(i) - h_I_out.at(i));
+        ASSERT_LT(diff, tolerance);
+    }
+
+    // Free resources
+    CUDA_CHECK(cudaFree(d_A));
+    CUDA_CHECK(cudaFree(d_A_inv));
+    CUDA_CHECK(cudaFree(d_I));
+
+    CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
+    CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
+
+    CUBLAS_CHECK(cublasDestroy_v2(cublasH));
+}
+
 TEST(DR_BCG, OutputCorrect)
 {
     constexpr int m = 32;
@@ -165,7 +289,8 @@ TEST(DR_BCG, OutputCorrect)
 
     constexpr float check_tolerance = 0.1;
     CUDA_CHECK(cudaMemcpy(B_check.data(), d_B, sizeof(float) * B_check.size(), cudaMemcpyDeviceToHost));
-    for (int i = 0; i < B.size(); i++) {
+    for (int i = 0; i < B.size(); i++)
+    {
         float diff = std::fabs(B_check.at(i) - B.at(i));
         ASSERT_LT(diff, check_tolerance);
     }
