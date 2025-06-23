@@ -3,7 +3,13 @@
 #include <cublas_v2.h>
 #include "dr_bcg/helper.h"
 
-/// @brief Prints a matrix stored in column-major order
+/**
+ * @brief Prints a matrix stored in column-major order.
+ * 
+ * @param mat Pointer to the matrix data (column-major)
+ * @param rows Number of rows in the matrix
+ * @param cols Number of columns in the matrix
+ */
 void print_matrix(const float *mat, const int rows, const int cols)
 {
     for (int i = 0; i < rows; i++)
@@ -16,12 +22,26 @@ void print_matrix(const float *mat, const int rows, const int cols)
     }
 }
 
+/**
+ * @brief Prints a device matrix by copying it to host and calling print_matrix.
+ * 
+ * @param d_mat Device pointer to the matrix (column-major)
+ * @param rows Number of rows in the matrix
+ * @param cols Number of columns in the matrix
+ */
 void print_device_matrix(const float *d_mat, const int rows, const int cols) {
     std::vector<float> h_mat(rows * cols);
     CUDA_CHECK(cudaMemcpy(h_mat.data(), d_mat, sizeof(float) * rows * cols, cudaMemcpyDeviceToHost));
     print_matrix(h_mat.data(), rows, cols);
 }
 
+/**
+ * @brief Fills a matrix with random values in the range [0, 1).
+ * 
+ * @param mat Pointer to the matrix data (host)
+ * @param rows Number of rows in the matrix
+ * @param cols Number of columns in the matrix
+ */
 void fill_random(float *mat, const int rows, const int cols)
 {
     for (int i = 0; i < rows; i++)
@@ -33,6 +53,14 @@ void fill_random(float *mat, const int rows, const int cols)
     }
 }
 
+/**
+ * @brief Fills a matrix with random values and makes it symmetric positive definite (SPD).
+ * 
+ * The matrix is filled with random values, then multiplied by its transpose to ensure SPD.
+ * 
+ * @param mat Pointer to the matrix data (host)
+ * @param n Matrix dimensions
+ */
 void fill_spd(float *mat, const int n)
 {
     fill_random(mat, n, n);
