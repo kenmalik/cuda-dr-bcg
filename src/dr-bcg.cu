@@ -77,15 +77,20 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(d.A, A, sizeof(float) * m * m, cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(d.X, X, sizeof(float) * m * n, cudaMemcpyHostToDevice));
 
-        // R = B - AX
+        // We don't include d_R in device buffers because it is only used once at the beginning
+        // of the algorithm.
         float *d_R;
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_R), sizeof(float) * m * n));
+
+        // R = B - AX
         get_R(cublasH, d_R, m, n, A, X, B);
 
         // [w, sigma] = qr(R)
         qr_factorization(cusolverH, cusolverParams, d.w, d.sigma, m, n, d_R);
-        CUDA_CHECK(cudaFree(d_R));
 
+        CUDA_CHECK(cudaFree(d_R)); // Never used later
+
+        // s = w
         CUDA_CHECK(cudaMemcpy(d.s, d.w, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
 
         float B1_norm;
@@ -157,6 +162,7 @@ namespace dr_bcg
 
         CUBLAS_CHECK(cublasDestroy_v2(cublasH));
         CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
+        CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
 
         return iterations;
     }
@@ -352,9 +358,6 @@ namespace dr_bcg
             exit(1);
         }
 
-        std::cout << "Cholesky" << std::endl;
-        print_device_matrix(d_A, n, n);
-
         // TODO: Parallelize this
         std::vector<float> I(n * n, 0);
         float *d_I = nullptr;
@@ -375,9 +378,6 @@ namespace dr_bcg
         }
 
         CUDA_CHECK(cudaMemcpy(d_A, d_I, sizeof(float) * n * n, cudaMemcpyDeviceToDevice));
-
-        std::cout << "Inverted" << std::endl;
-        print_device_matrix(d_A, n, n);
 
         CUDA_CHECK(cudaFree(d_I));
         CUDA_CHECK(cudaFree(d_info));
