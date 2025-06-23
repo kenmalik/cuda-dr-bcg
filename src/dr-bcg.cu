@@ -1,5 +1,6 @@
 #include <iostream>
 #include <vector>
+#include <string>
 
 #include "dr_bcg/dr-bcg.h"
 #include "dr_bcg/helper.h"
@@ -287,7 +288,8 @@ namespace dr_bcg
                                         m, CUDA_R_32F, d_tau,
                                         CUDA_R_32F, d_work, lwork_geqrf_d, h_work,
                                         lwork_geqrf_h, d_info));
-        if (h_work) {
+        if (h_work)
+        {
             free(h_work); // No longer needed
         }
 
@@ -300,8 +302,7 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
         {
-            std::printf("%d-th parameter is wrong \n", -info);
-            exit(1);
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
         }
 
         // Explicitly compute Q
@@ -356,8 +357,7 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
         {
-            std::fprintf(stderr, "%d-th parameter is wrong \n", -info);
-            exit(1);
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
         }
 
         // TODO: Parallelize this
@@ -378,8 +378,7 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
         {
-            std::fprintf(stderr, "%d-th parameter is wrong \n", -info);
-            exit(1);
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
         }
 
         CUDA_CHECK(cudaMemcpy(d_A, d_I, sizeof(float) * n * n, cudaMemcpyDeviceToDevice));
