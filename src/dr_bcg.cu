@@ -453,7 +453,11 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
         {
-            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong.");
+        }
+        if (info > 0)
+        {
+            throw std::runtime_error("Smallest leading minor " + std::to_string(info) + " is not positive definite.");
         }
         CUDA_CHECK(cudaFree(d_work));
 
@@ -469,7 +473,11 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
         {
-            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong.");
+        }
+        if (info > 0)
+        {
+            throw std::runtime_error("Leading minor of order " + std::to_string(info) + " is zero.");
         }
 
         constexpr int block_n = 16;
