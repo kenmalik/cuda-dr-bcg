@@ -88,3 +88,13 @@ Run the example like so, replacing `my-acct-num` with your account identifier:
 export ACCOUNT=my-acct-num
 make run
 ```
+
+## Building Tests and Benchmarks
+
+By default, unit tests and benchmarks are not built alongside the main library.
+
+To build them, build the project with the following flags:
+
+```bash
+cmake -B build -S . -DDR_BCG_BUILD_TESTS=ON -DDR_BCG_BUILD_BENCHMARKS=ON
+```
