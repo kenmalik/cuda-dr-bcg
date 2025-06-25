@@ -7,6 +7,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(CUDAToolkit REQUIRED)
 enable_language(CUDA)
 
+option(BUILD_TESTS "Enable tests" ON)
+option(BUILD_BENCHMARKS "Enable benchmarks" ON)
+
 set(CMAKE_CUDA_ARCHITECTURES 80)
 
 add_library(dr_bcg
@@ -26,4 +29,8 @@ target_link_libraries(example PRIVATE dr_bcg)
 
 if(BUILD_TESTS)
     add_subdirectory("test")
+endif()
+
+if(BUILD_BENCHMARKS)
+    add_subdirectory("benchmark")
 endif()

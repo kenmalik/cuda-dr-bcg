@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdexcept>
+
 #define CUDA_CHECK(err)                                                            \
     do                                                                             \
     {                                                                              \
