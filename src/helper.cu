@@ -44,11 +44,11 @@ void print_device_matrix(const float *d_mat, const int rows, const int cols) {
  */
 void fill_random(float *mat, const int rows, const int cols)
 {
-    for (int i = 0; i < rows; i++)
+    for (int j = 0; j < cols; j++)
     {
-        for (int j = 0; j < cols; j++)
+        for (int i = 0; i < rows; i++)
         {
-            mat[i * cols + j] = std::rand() % 100 / 100.0;
+            mat[j * rows + i] = std::rand() % 100 / 100.0;
         }
     }
 }

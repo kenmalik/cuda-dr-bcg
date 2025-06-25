@@ -285,7 +285,7 @@ namespace dr_bcg
      */
     void residual(cublasHandle_t &cublasH, float *d_residual, const float *B, const int m, const float *d_A, const float *d_X)
     {
-        CUDA_CHECK(cudaMemcpy(d_residual, B, sizeof(float) * m, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_residual, B, sizeof(float) * m, cudaMemcpyDeviceToDevice));
 
         constexpr float alpha = -1;
         constexpr float beta = 1;
