@@ -26,8 +26,8 @@ struct DeviceBuffer
 
     /**
      * @brief Constructor. Allocates all device buffers.
-     * @param m Number of rows
-     * @param n Number of columns
+     * @param m m dimension
+     * @param n n dimension
      */
     DeviceBuffer(int m, int n)
     {
@@ -44,8 +44,8 @@ struct DeviceBuffer
 
     /**
      * @brief Allocates device memory for all buffers.
-     * @param m Number of rows
-     * @param n Number of columns
+     * @param m m dimension
+     * @param n n dimension
      */
     void allocate(int m, int n)
     {
@@ -94,18 +94,18 @@ __global__ void symmetrize_matrix(float *A, const int n)
 namespace dr_bcg
 {
     /**
-     * @brief Main DR-BCG solver routine.
+     * @brief Convenience wrapper for DR-BCG solver routine.
      *
-     * Solves the block linear system AX = B using the DR-BCG algorithm.
+     * Solves the block linear system AX = B using the DR-BCG algorithm, taking vectors and allocating device memory as required.
      *
-     * @param A Host pointer to input matrix A (m x m)
-     * @param X Host pointer to initial guess X (m x n), overwritten with solution
-     * @param B Host pointer to right-hand side B (m x n)
-     * @param m Number of rows
-     * @param n Number of columns
+     * @param A Host vector representing input matrix A (m x m)
+     * @param X Host vector representing initial guess X (m x n)
+     * @param B Host vector representing right-hand side B (m x n)
+     * @param m m dimension
+     * @param n n dimension
      * @param tolerance Relative residual tolerance for convergence
      * @param max_iterations Maximum number of iterations
-     * @return Number of iterations performed
+     * @return Tuple containing the solution X (as a std::vector<float>) and the number of iterations performed
      */
     std::tuple<std::vector<float>, int> dr_bcg(
         const std::vector<float> &A,
@@ -154,6 +154,24 @@ namespace dr_bcg
         return {X_final, iterations};
     }
 
+    /**
+     * @brief Main DR-BCG solver routine.
+     *
+     * Solves the block linear system AX = B using the DR-BCG algorithm on device pointers.
+     *
+     * @param cusolverH cuSOLVER handle
+     * @param cusolverParams cuSOLVER params
+     * @param cublasH cuBLAS handle
+     * @param m m dimension
+     * @param n n dimension
+     * @param A Device pointer to input matrix A (m x m)
+     * @param X Device pointer to initial guess X (m x n), overwritten with solution
+     * @param B Device pointer to right-hand side B (m x n)
+     * @param tolerance Relative residual tolerance for convergence
+     * @param max_iterations Maximum number of iterations
+     * @param iterations Pointer to int, overwritten with number of iterations performed
+     * @return cuSOLVER status
+     */
     cusolverStatus_t dr_bcg(
         cusolverDnHandle_t cusolverH,
         cusolverDnParams_t cusolverParams,
@@ -285,8 +303,8 @@ namespace dr_bcg
      * @brief Calculates next X guess with the following formula: X_{i+1} = X_{i} + s * xi * sigma
      *
      * @param cublasH cuBLAS handle
-     * @param m Number of rows
-     * @param n Number of columns
+     * @param m m dimension
+     * @param n n dimension
      * @param d_s Device pointer to s (m x n)
      * @param d_xi Device pointer to xi (n x n)
      * @param d_temp Device pointer to temporary buffer (m x n)
@@ -308,8 +326,8 @@ namespace dr_bcg
      * @brief Compute y = x^T * A * x
      *
      * @param cublasH cuBLAS handle
-     * @param m Number of rows
-     * @param n Number of columns
+     * @param m m dimension
+     * @param n n dimension
      * @param d_x Device pointer to x (n x m)
      * @param d_A Device pointer to A (m x m)
      * @param d_work Device pointer to workspace
@@ -334,8 +352,8 @@ namespace dr_bcg
      *
      * @param cublasH cuBLAS handle
      * @param d_R Device pointer to result R (m x n)
-     * @param m Number of rows
-     * @param n Number of columns
+     * @param m m dimension
+     * @param n n dimension
      * @param A Host pointer to A (m x m)
      * @param X Host pointer to X (m x n)
      * @param B Host pointer to B (m x n)
