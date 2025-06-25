@@ -11,8 +11,8 @@
 
 static void BM_DR_BCG(benchmark::State &state)
 {
-    constexpr int m = 128;
-    constexpr int n = 4;
+    const int m = state.range(0);
+    const int n = state.range(1);
     constexpr float tolerance = 0.01;
     constexpr int max_iterations = 128;
 
@@ -78,4 +78,4 @@ static void BM_DR_BCG(benchmark::State &state)
     CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
     CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
 }
-BENCHMARK(BM_DR_BCG)->UseManualTime()->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_DR_BCG)->UseManualTime()->Unit(benchmark::kMillisecond)->RangeMultiplier(2)->Ranges({{64, 256}, {4, 16}});
