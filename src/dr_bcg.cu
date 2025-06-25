@@ -206,11 +206,7 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(d.s, d.w, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
 
         float B1_norm;
-        float *d_B1 = nullptr;
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_B1), sizeof(float) * m));
-        CUDA_CHECK(cudaMemcpy(d_B1, B, sizeof(float) * m, cudaMemcpyDeviceToDevice));
-        CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, d_B1, 1, &B1_norm));
-        CUDA_CHECK(cudaFree(d_B1));
+        CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, B, 1, &B1_norm));
 
         *iterations = 0;
         while (*iterations < max_iterations)
