@@ -1,5 +1,6 @@
 #include <iostream>
 #include <vector>
+#include <tuple>
 
 #include "dr_bcg/helper.h"
 #include "dr_bcg/dr_bcg.h"
@@ -17,10 +18,10 @@ int main(int argc, char *argv[])
     std::vector<float> B(m * n);
     fill_random(B.data(), m, n);
 
-    int iterations = dr_bcg::dr_bcg(A.data(), X.data(), B.data(), m, n, tolerance, max_iterations);
+    auto [solution, iterations] = dr_bcg::dr_bcg(A, X, B, m, n, tolerance, max_iterations);
 
     std::cout << "Solution X Final:" << std::endl;
-    print_matrix(X.data(), m, n);
+    print_matrix(solution.data(), m, n);
 
     std::cout << "Done in " << iterations << " iterations" << std::endl;
 

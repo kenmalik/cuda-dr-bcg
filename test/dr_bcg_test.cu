@@ -271,7 +271,7 @@ TEST(DR_BCG, OutputCorrect)
     std::vector<float> B_out(m * n);
 
     // Operation
-    dr_bcg::dr_bcg(A.data(), X.data(), B_in.data(), m, n, convergance_tolerance, max_iterations);
+    auto [solution, iterations] = dr_bcg::dr_bcg(A, X, B_in, m, n, convergance_tolerance, max_iterations);
 
     // Test A * X = B
     cublasHandle_t cublasH;
@@ -282,8 +282,8 @@ TEST(DR_BCG, OutputCorrect)
     float *d_B = nullptr;
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * A.size()));
     CUDA_CHECK(cudaMemcpy(d_A, A.data(), sizeof(float) * A.size(), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * X.size()));
-    CUDA_CHECK(cudaMemcpy(d_X, X.data(), sizeof(float) * X.size(), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * solution.size()));
+    CUDA_CHECK(cudaMemcpy(d_X, solution.data(), sizeof(float) * solution.size(), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_B), sizeof(float) * B_out.size()));
 
     constexpr float alpha = 1;

@@ -1,5 +1,6 @@
 #include <iostream>
 #include <vector>
+#include <tuple>
 #include <string>
 
 #include "dr_bcg/dr_bcg.h"
@@ -13,7 +14,7 @@
  */
 struct DeviceBuffer
 {
-    float *A = nullptr;        ///< Device pointer for matrix A (m x m)
+    const float *A = nullptr;  ///< Device pointer for matrix A (m x m)
     float *X = nullptr;        ///< Device pointer for matrix X (m x n)
     float *w = nullptr;        ///< Device pointer for matrix w (m x n)
     float *sigma = nullptr;    ///< Device pointer for matrix sigma (n x n)
@@ -48,8 +49,6 @@ struct DeviceBuffer
      */
     void allocate(int m, int n)
     {
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&A), sizeof(float) * m * m));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&X), sizeof(float) * m * n));
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&w), sizeof(float) * m * n));
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&sigma), sizeof(float) * n * n));
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&s), sizeof(float) * m * n));
@@ -64,8 +63,6 @@ struct DeviceBuffer
      */
     void deallocate()
     {
-        CUDA_CHECK(cudaFree(A));
-        CUDA_CHECK(cudaFree(X));
         CUDA_CHECK(cudaFree(w));
         CUDA_CHECK(cudaFree(sigma));
         CUDA_CHECK(cudaFree(s));
@@ -110,16 +107,16 @@ namespace dr_bcg
      * @param max_iterations Maximum number of iterations
      * @return Number of iterations performed
      */
-    int dr_bcg(
-        const float *A,
-        float *X,
-        const float *B,
+    std::tuple<std::vector<float>, int> dr_bcg(
+        const std::vector<float> &A,
+        const std::vector<float> &X,
+        const std::vector<float> &B,
         const int m,
         const int n,
         const float tolerance,
         const int max_iterations)
     {
-        cublasHandle_t cublasH;
+        cublasHandle_t cublasH = NULL;
         CUBLAS_CHECK(cublasCreate(&cublasH));
 
         cusolverDnHandle_t cusolverH = NULL;
@@ -127,9 +124,52 @@ namespace dr_bcg
         CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
         CUSOLVER_CHECK(cusolverDnCreateParams(&cusolverParams));
 
+        std::vector<float> X_final(m * n);
+        int iterations = 0;
+
+        float *d_A = nullptr;
+        float *d_X = nullptr;
+        float *d_B = nullptr;
+
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * m * m));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * m * n));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_B), sizeof(float) * m * n));
+
+        CUDA_CHECK(cudaMemcpy(d_A, A.data(), sizeof(float) * m * m, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_X, X.data(), sizeof(float) * m * n, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_B, B.data(), sizeof(float) * m * n, cudaMemcpyHostToDevice));
+
+        CUSOLVER_CHECK(dr_bcg(cusolverH, cusolverParams, cublasH, m, n, d_A, d_X, d_B, tolerance, max_iterations, &iterations));
+
+        CUDA_CHECK(cudaMemcpy(X_final.data(), d_X, sizeof(float) * m * n, cudaMemcpyDeviceToHost));
+
+        CUBLAS_CHECK(cublasDestroy_v2(cublasH));
+        CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
+        CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
+
+        CUDA_CHECK(cudaFree(d_A));
+        CUDA_CHECK(cudaFree(d_X));
+        CUDA_CHECK(cudaFree(d_B));
+
+        return {X_final, iterations};
+    }
+
+    cusolverStatus_t dr_bcg(
+        cusolverDnHandle_t cusolverH,
+        cusolverDnParams_t cusolverParams,
+        cublasHandle_t cublasH,
+        int m,
+        int n,
+        const float *A,
+        float *X,
+        const float *B,
+        float tolerance,
+        int max_iterations,
+        int *iterations)
+    {
         DeviceBuffer d(m, n);
-        CUDA_CHECK(cudaMemcpy(d.A, A, sizeof(float) * m * m, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d.X, X, sizeof(float) * m * n, cudaMemcpyHostToDevice));
+        d.A = A;
+        d.X = X;
 
         // We don't include d_R in device buffers because it is only used once at the beginning
         // of the algorithm.
@@ -150,14 +190,14 @@ namespace dr_bcg
         float B1_norm;
         float *d_B1 = nullptr;
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_B1), sizeof(float) * m));
-        CUDA_CHECK(cudaMemcpy(d_B1, B, sizeof(float) * m, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_B1, B, sizeof(float) * m, cudaMemcpyDeviceToDevice));
         CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, d_B1, 1, &B1_norm));
         CUDA_CHECK(cudaFree(d_B1));
 
-        int iterations = 0;
-        while (iterations < max_iterations)
+        *iterations = 0;
+        while (*iterations < max_iterations)
         {
-            iterations++;
+            (*iterations)++;
 
             // xi = (s' * A * s)^-1
             quadratic_form(cublasH, m, n, d.s, d.A, d.temp, d.xi);
@@ -216,11 +256,7 @@ namespace dr_bcg
 
         CUDA_CHECK(cudaMemcpy(X, d.X, sizeof(float) * m * n, cudaMemcpyDeviceToHost));
 
-        CUBLAS_CHECK(cublasDestroy_v2(cublasH));
-        CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
-        CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
-
-        return iterations;
+        return CUSOLVER_STATUS_SUCCESS;
     }
 
     /**
@@ -304,28 +340,17 @@ namespace dr_bcg
      * @param X Host pointer to X (m x n)
      * @param B Host pointer to B (m x n)
      */
-    void get_R(cublasHandle_t &cublasH, float *d_R, const int m, const int n, const float *A, const float *X, const float *B)
+    void get_R(cublasHandle_t &cublasH, float *R, const int m, const int n, const float *A, const float *X, const float *B)
     {
         constexpr float alpha = -1;
         constexpr float beta = 1;
 
-        float *d_A = nullptr;
-        float *d_X = nullptr;
-
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * m * m));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * m * n));
-
-        CUDA_CHECK(cudaMemcpy(d_A, A, sizeof(float) * m * m, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_X, X, sizeof(float) * m * n, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_R, B, sizeof(float) * m * n, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(R, B, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
 
         CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N,
                                     m, n, m,
-                                    &alpha, d_A, m, d_X, m,
-                                    &beta, d_R, m));
-
-        CUDA_CHECK(cudaFree(d_A));
-        CUDA_CHECK(cudaFree(d_X));
+                                    &alpha, A, m, X, m,
+                                    &beta, R, m));
     }
 
     /**
