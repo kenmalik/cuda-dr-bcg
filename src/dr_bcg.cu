@@ -1,5 +1,6 @@
 #include <iostream>
 #include <vector>
+#include <tuple>
 #include <string>
 
 #include "dr_bcg/dr_bcg.h"
@@ -13,7 +14,7 @@
  */
 struct DeviceBuffer
 {
-    float *A = nullptr;        ///< Device pointer for matrix A (m x m)
+    const float *A = nullptr;  ///< Device pointer for matrix A (m x m)
     float *X = nullptr;        ///< Device pointer for matrix X (m x n)
     float *w = nullptr;        ///< Device pointer for matrix w (m x n)
     float *sigma = nullptr;    ///< Device pointer for matrix sigma (n x n)
@@ -25,8 +26,8 @@ struct DeviceBuffer
 
     /**
      * @brief Constructor. Allocates all device buffers.
-     * @param m Number of rows
-     * @param n Number of columns
+     * @param m m dimension
+     * @param n n dimension
      */
     DeviceBuffer(int m, int n)
     {
@@ -43,13 +44,11 @@ struct DeviceBuffer
 
     /**
      * @brief Allocates device memory for all buffers.
-     * @param m Number of rows
-     * @param n Number of columns
+     * @param m m dimension
+     * @param n n dimension
      */
     void allocate(int m, int n)
     {
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&A), sizeof(float) * m * m));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&X), sizeof(float) * m * n));
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&w), sizeof(float) * m * n));
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&sigma), sizeof(float) * n * n));
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&s), sizeof(float) * m * n));
@@ -64,8 +63,6 @@ struct DeviceBuffer
      */
     void deallocate()
     {
-        CUDA_CHECK(cudaFree(A));
-        CUDA_CHECK(cudaFree(X));
         CUDA_CHECK(cudaFree(w));
         CUDA_CHECK(cudaFree(sigma));
         CUDA_CHECK(cudaFree(s));
@@ -97,29 +94,29 @@ __global__ void symmetrize_matrix(float *A, const int n)
 namespace dr_bcg
 {
     /**
-     * @brief Main DR-BCG solver routine.
+     * @brief Convenience wrapper for DR-BCG solver routine.
      *
-     * Solves the block linear system AX = B using the DR-BCG algorithm.
+     * Solves the block linear system AX = B using the DR-BCG algorithm, taking vectors and allocating device memory as required.
      *
-     * @param A Host pointer to input matrix A (m x m)
-     * @param X Host pointer to initial guess X (m x n), overwritten with solution
-     * @param B Host pointer to right-hand side B (m x n)
-     * @param m Number of rows
-     * @param n Number of columns
+     * @param A Host vector representing input matrix A (m x m)
+     * @param X Host vector representing initial guess X (m x n)
+     * @param B Host vector representing right-hand side B (m x n)
+     * @param m m dimension
+     * @param n n dimension
      * @param tolerance Relative residual tolerance for convergence
      * @param max_iterations Maximum number of iterations
-     * @return Number of iterations performed
+     * @return Tuple containing the solution X (as a std::vector<float>) and the number of iterations performed
      */
-    int dr_bcg(
-        const float *A,
-        float *X,
-        const float *B,
+    std::tuple<std::vector<float>, int> dr_bcg(
+        const std::vector<float> &A,
+        const std::vector<float> &X,
+        const std::vector<float> &B,
         const int m,
         const int n,
         const float tolerance,
         const int max_iterations)
     {
-        cublasHandle_t cublasH;
+        cublasHandle_t cublasH = NULL;
         CUBLAS_CHECK(cublasCreate(&cublasH));
 
         cusolverDnHandle_t cusolverH = NULL;
@@ -127,9 +124,70 @@ namespace dr_bcg
         CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
         CUSOLVER_CHECK(cusolverDnCreateParams(&cusolverParams));
 
+        std::vector<float> X_final(m * n);
+        int iterations = 0;
+
+        float *d_A = nullptr;
+        float *d_X = nullptr;
+        float *d_B = nullptr;
+
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * m * m));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * m * n));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_B), sizeof(float) * m * n));
+
+        CUDA_CHECK(cudaMemcpy(d_A, A.data(), sizeof(float) * m * m, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_X, X.data(), sizeof(float) * m * n, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_B, B.data(), sizeof(float) * m * n, cudaMemcpyHostToDevice));
+
+        CUSOLVER_CHECK(dr_bcg(cusolverH, cusolverParams, cublasH, m, n, d_A, d_X, d_B, tolerance, max_iterations, &iterations));
+
+        CUDA_CHECK(cudaMemcpy(X_final.data(), d_X, sizeof(float) * m * n, cudaMemcpyDeviceToHost));
+
+        CUBLAS_CHECK(cublasDestroy_v2(cublasH));
+        CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
+        CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
+
+        CUDA_CHECK(cudaFree(d_A));
+        CUDA_CHECK(cudaFree(d_X));
+        CUDA_CHECK(cudaFree(d_B));
+
+        return {X_final, iterations};
+    }
+
+    /**
+     * @brief Main DR-BCG solver routine.
+     *
+     * Solves the block linear system AX = B using the DR-BCG algorithm on device pointers.
+     *
+     * @param cusolverH cuSOLVER handle
+     * @param cusolverParams cuSOLVER params
+     * @param cublasH cuBLAS handle
+     * @param m m dimension
+     * @param n n dimension
+     * @param A Device pointer to input matrix A (m x m)
+     * @param X Device pointer to initial guess X (m x n), overwritten with solution
+     * @param B Device pointer to right-hand side B (m x n)
+     * @param tolerance Relative residual tolerance for convergence
+     * @param max_iterations Maximum number of iterations
+     * @param iterations Pointer to int, overwritten with number of iterations performed
+     * @return cuSOLVER status
+     */
+    cusolverStatus_t dr_bcg(
+        cusolverDnHandle_t cusolverH,
+        cusolverDnParams_t cusolverParams,
+        cublasHandle_t cublasH,
+        int m,
+        int n,
+        const float *A,
+        float *X,
+        const float *B,
+        float tolerance,
+        int max_iterations,
+        int *iterations)
+    {
         DeviceBuffer d(m, n);
-        CUDA_CHECK(cudaMemcpy(d.A, A, sizeof(float) * m * m, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d.X, X, sizeof(float) * m * n, cudaMemcpyHostToDevice));
+        d.A = A;
+        d.X = X;
 
         // We don't include d_R in device buffers because it is only used once at the beginning
         // of the algorithm.
@@ -148,16 +206,12 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(d.s, d.w, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
 
         float B1_norm;
-        float *d_B1 = nullptr;
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_B1), sizeof(float) * m));
-        CUDA_CHECK(cudaMemcpy(d_B1, B, sizeof(float) * m, cudaMemcpyHostToDevice));
-        CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, d_B1, 1, &B1_norm));
-        CUDA_CHECK(cudaFree(d_B1));
+        CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, B, 1, &B1_norm));
 
-        int iterations = 0;
-        while (iterations < max_iterations)
+        *iterations = 0;
+        while (*iterations < max_iterations)
         {
-            iterations++;
+            (*iterations)++;
 
             // xi = (s' * A * s)^-1
             quadratic_form(cublasH, m, n, d.s, d.A, d.temp, d.xi);
@@ -216,11 +270,7 @@ namespace dr_bcg
 
         CUDA_CHECK(cudaMemcpy(X, d.X, sizeof(float) * m * n, cudaMemcpyDeviceToHost));
 
-        CUBLAS_CHECK(cublasDestroy_v2(cublasH));
-        CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
-        CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
-
-        return iterations;
+        return CUSOLVER_STATUS_SUCCESS;
     }
 
     /**
@@ -249,8 +299,8 @@ namespace dr_bcg
      * @brief Calculates next X guess with the following formula: X_{i+1} = X_{i} + s * xi * sigma
      *
      * @param cublasH cuBLAS handle
-     * @param m Number of rows
-     * @param n Number of columns
+     * @param m m dimension
+     * @param n n dimension
      * @param d_s Device pointer to s (m x n)
      * @param d_xi Device pointer to xi (n x n)
      * @param d_temp Device pointer to temporary buffer (m x n)
@@ -272,8 +322,8 @@ namespace dr_bcg
      * @brief Compute y = x^T * A * x
      *
      * @param cublasH cuBLAS handle
-     * @param m Number of rows
-     * @param n Number of columns
+     * @param m m dimension
+     * @param n n dimension
      * @param d_x Device pointer to x (n x m)
      * @param d_A Device pointer to A (m x m)
      * @param d_work Device pointer to workspace
@@ -298,34 +348,23 @@ namespace dr_bcg
      *
      * @param cublasH cuBLAS handle
      * @param d_R Device pointer to result R (m x n)
-     * @param m Number of rows
-     * @param n Number of columns
+     * @param m m dimension
+     * @param n n dimension
      * @param A Host pointer to A (m x m)
      * @param X Host pointer to X (m x n)
      * @param B Host pointer to B (m x n)
      */
-    void get_R(cublasHandle_t &cublasH, float *d_R, const int m, const int n, const float *A, const float *X, const float *B)
+    void get_R(cublasHandle_t &cublasH, float *R, const int m, const int n, const float *A, const float *X, const float *B)
     {
         constexpr float alpha = -1;
         constexpr float beta = 1;
 
-        float *d_A = nullptr;
-        float *d_X = nullptr;
-
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * m * m));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * m * n));
-
-        CUDA_CHECK(cudaMemcpy(d_A, A, sizeof(float) * m * m, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_X, X, sizeof(float) * m * n, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_R, B, sizeof(float) * m * n, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(R, B, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
 
         CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N,
                                     m, n, m,
-                                    &alpha, d_A, m, d_X, m,
-                                    &beta, d_R, m));
-
-        CUDA_CHECK(cudaFree(d_A));
-        CUDA_CHECK(cudaFree(d_X));
+                                    &alpha, A, m, X, m,
+                                    &beta, R, m));
     }
 
     /**
@@ -453,7 +492,11 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
         {
-            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong.");
+        }
+        if (info > 0)
+        {
+            throw std::runtime_error("Smallest leading minor " + std::to_string(info) + " is not positive definite.");
         }
         CUDA_CHECK(cudaFree(d_work));
 
@@ -469,7 +512,11 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
         {
-            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong.");
+        }
+        if (info > 0)
+        {
+            throw std::runtime_error("Leading minor of order " + std::to_string(info) + " is zero.");
         }
 
         constexpr int block_n = 16;
