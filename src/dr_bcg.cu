@@ -93,6 +93,20 @@ __global__ void symmetrize_matrix(float *A, const int n)
 
 namespace dr_bcg
 {
+    // Helper function to check for NaNs in a device array
+    void check_nan(const float *d_arr, size_t size, std::string step)
+    {
+        std::vector<float> h_arr(size);
+        CUDA_CHECK(cudaMemcpy(h_arr.data(), d_arr, sizeof(float) * size, cudaMemcpyDeviceToHost));
+        for (size_t i = 0; i < size; ++i)
+        {
+            if (std::isnan(h_arr[i]))
+            {
+                throw std::runtime_error("NaN detected after step: " + step);
+            }
+        }
+    }
+
     /**
      * @brief Convenience wrapper for DR-BCG solver routine.
      *
@@ -215,6 +229,10 @@ namespace dr_bcg
 
             // xi = (s' * A * s)^-1
             quadratic_form(cublasH, m, n, d.s, d.A, d.temp, d.xi);
+            check_nan(d.xi, n * n, "quadratic_form (xi before invert)");
+
+            print_device_matrix(d.xi, n, n);
+
             invert_spd(cusolverH, cusolverParams, d.xi, n);
 
             // X = X + s * xi * sigma
@@ -223,6 +241,7 @@ namespace dr_bcg
             // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
             float relative_residual_norm;
             residual(cublasH, d.residual, B, m, d.A, d.X);
+
             CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, d.residual, 1, &relative_residual_norm));
             relative_residual_norm /= B1_norm;
 
@@ -460,6 +479,7 @@ namespace dr_bcg
      */
     void invert_spd(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *d_A, const int n)
     {
+        // Cholesky Decomposition
         size_t workspaceInBytesOnDevice = 0;
         void *d_work = nullptr;
         size_t workspaceInBytesOnHost = 0;
@@ -484,10 +504,18 @@ namespace dr_bcg
             }
         }
 
+        std::cout << "\nBefore Xpotrf" << std::endl;
+        print_device_matrix(d_A, n, n);
+
         CUSOLVER_CHECK(cusolverDnXpotrf(cusolverH, params, CUBLAS_FILL_MODE_LOWER,
                                         n, CUDA_R_32F, d_A, n,
                                         CUDA_R_32F, d_work, workspaceInBytesOnDevice,
                                         h_work, workspaceInBytesOnHost, d_info));
+
+        std::cout << "After Xpotrf" << std::endl;
+        print_device_matrix(d_A, n, n);
+
+        check_nan(d_A, n * n, "invert_spd::Xpotrf");
 
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
@@ -500,6 +528,7 @@ namespace dr_bcg
         }
         CUDA_CHECK(cudaFree(d_work));
 
+        // Inversion
         float *d_work_Spotri = nullptr;
         int lwork_Spotri = 0;
         info = 0;
@@ -508,6 +537,8 @@ namespace dr_bcg
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work_Spotri), lwork_Spotri));
         CUSOLVER_CHECK(cusolverDnSpotri(cusolverH, CUBLAS_FILL_MODE_LOWER, n,
                                         d_A, n, d_work_Spotri, lwork_Spotri, d_info));
+
+        check_nan(d_A, n * n, "invert_spd::Spotri");
 
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
