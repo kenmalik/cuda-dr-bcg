@@ -68,7 +68,7 @@ void fill_spd(float *mat, const int n)
     cublasHandle_t cublasH;
     CUBLAS_CHECK(cublasCreate_v2(&cublasH));
 
-    float alpha = 1.0;
+    float alpha = 1.0 / n;
     float beta = 0.0;
 
     float *d_mat = nullptr;
