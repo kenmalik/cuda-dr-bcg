@@ -218,6 +218,7 @@ namespace dr_bcg
 
         // s = w
         CUDA_CHECK(cudaMemcpy(d.s, d.w, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
+        print_device_matrix(d.s, m, n);
 
         float B1_norm;
         CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, B, 1, &B1_norm));
@@ -229,9 +230,6 @@ namespace dr_bcg
 
             // xi = (s' * A * s)^-1
             quadratic_form(cublasH, m, n, d.s, d.A, d.temp, d.xi);
-            check_nan(d.xi, n * n, "quadratic_form (xi before invert)");
-
-            print_device_matrix(d.xi, n, n);
 
             invert_spd(cusolverH, cusolverParams, d.xi, n);
 
