@@ -235,7 +235,7 @@ namespace dr_bcg
             // xi = (s' * A * s)^-1
             quadratic_form(cublasH, m, n, d.s, A, d.temp, d.xi);
 
-            invert_spd(cusolverH, cusolverParams, d.xi, n);
+            invert_square_matrix(cusolverH, cusolverParams, d.xi, n);
 
             // X = X + s * xi * sigma
             next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, X);
@@ -483,9 +483,9 @@ namespace dr_bcg
      * @param d_A Device pointer to the symmetric positive definite matrix to invert. Result is overwritten to pointed location.
      * @param n Matrix dimension
      */
-    void invert_spd(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *d_A, const int n)
+    void invert_square_matrix(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *d_A, const int n)
     {
-        // Cholesky Decomposition
+        // LU Decomposition
         size_t workspaceInBytesOnDevice = 0;
         void *d_work = nullptr;
         size_t workspaceInBytesOnHost = 0;
@@ -494,65 +494,66 @@ namespace dr_bcg
         int info = 0;
         int *d_info = nullptr;
 
+        std::vector<int64_t> h_Ipiv(n, 0);
+        int64_t *d_Ipiv = nullptr;
+
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_Ipiv), sizeof(int64_t) * h_Ipiv.size()));
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
 
-        CUSOLVER_CHECK(cusolverDnXpotrf_bufferSize(cusolverH, params, CUBLAS_FILL_MODE_LOWER,
-                                                   n, CUDA_R_32F, d_A, n, CUDA_R_32F,
+        CUSOLVER_CHECK(cusolverDnXgetrf_bufferSize(cusolverH, params, n, n,
+                                                   CUDA_R_32F, d_A, n, CUDA_R_32F,
                                                    &workspaceInBytesOnDevice, &workspaceInBytesOnHost));
 
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), workspaceInBytesOnDevice));
         if (0 < workspaceInBytesOnHost)
         {
-            h_work = reinterpret_cast<void *>(malloc(sizeof(float) * workspaceInBytesOnHost));
+            h_work = reinterpret_cast<void *>(malloc(workspaceInBytesOnHost));
             if (h_work == nullptr)
             {
                 throw std::runtime_error("Error: h_work not allocated.");
             }
         }
 
-        CUSOLVER_CHECK(cusolverDnXpotrf(cusolverH, params, CUBLAS_FILL_MODE_LOWER,
-                                        n, CUDA_R_32F, d_A, n,
-                                        CUDA_R_32F, d_work, workspaceInBytesOnDevice,
+        CUSOLVER_CHECK(cusolverDnXgetrf(cusolverH, params, n, n,
+                                        CUDA_R_32F, d_A, n, d_Ipiv, CUDA_R_32F,
+                                        d_work, workspaceInBytesOnDevice,
                                         h_work, workspaceInBytesOnHost, d_info));
 
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
         {
-            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong.");
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
         }
-        if (info > 0)
-        {
-            throw std::runtime_error("Smallest leading minor " + std::to_string(info) + " is not positive definite.");
-        }
-        CUDA_CHECK(cudaFree(d_work));
 
-        // Inversion
-        float *d_work_Spotri = nullptr;
-        int lwork_Spotri = 0;
-        info = 0;
-        CUSOLVER_CHECK(cusolverDnSpotri_bufferSize(cusolverH, CUBLAS_FILL_MODE_LOWER, n,
-                                                   d_A, n, &lwork_Spotri));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work_Spotri), lwork_Spotri));
-        CUSOLVER_CHECK(cusolverDnSpotri(cusolverH, CUBLAS_FILL_MODE_LOWER, n,
-                                        d_A, n, d_work_Spotri, lwork_Spotri, d_info));
+        CUDA_CHECK(cudaFree(d_work));
+        free(h_work);
+
+        // Solve A * X = I for inverse
+        std::vector<float> h_I(n * n, 0);
+        float *d_I = nullptr;
+
+        for (int i = 0; i < n; i++)
+        {
+            h_I.at(i * n + i) = 1;
+        }
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_I), sizeof(float) * h_I.size()));
+        CUDA_CHECK(cudaMemcpy(d_I, h_I.data(), sizeof(float) * h_I.size(), cudaMemcpyHostToDevice));
+
+        CUSOLVER_CHECK(cusolverDnXgetrs(cusolverH, params, CUBLAS_OP_N, n, n,
+                                        CUDA_R_32F, d_A, n, d_Ipiv, CUDA_R_32F,
+                                        d_I, n, d_info));
 
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
         {
-            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong.");
-        }
-        if (info > 0)
-        {
-            throw std::runtime_error("Leading minor of order " + std::to_string(info) + " is zero.");
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
         }
 
-        constexpr int block_n = 16;
-        dim3 block_dim(block_n, block_n);
-        dim3 grid_dim((n + block_n - 1) / block_n, (n + block_n - 1) / block_n);
-        symmetrize_matrix<<<grid_dim, block_dim>>>(d_A, n);
+        CUDA_CHECK(cudaMemcpy(d_A, d_I, sizeof(float) * h_I.size(), cudaMemcpyDeviceToDevice));
 
-        CUDA_CHECK(cudaFree(d_work_Spotri));
+        CUDA_CHECK(cudaFree(d_I));
 
+        CUDA_CHECK(cudaFree(d_Ipiv));
         CUDA_CHECK(cudaFree(d_info));
     }
 }
