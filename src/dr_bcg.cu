@@ -14,8 +14,6 @@
  */
 struct DeviceBuffer
 {
-    const float *A = nullptr;  ///< Device pointer for matrix A (m x m)
-    float *X = nullptr;        ///< Device pointer for matrix X (m x n)
     float *w = nullptr;        ///< Device pointer for matrix w (m x n)
     float *sigma = nullptr;    ///< Device pointer for matrix sigma (n x n)
     float *s = nullptr;        ///< Device pointer for matrix s (m x n)
@@ -186,8 +184,6 @@ namespace dr_bcg
         int *iterations)
     {
         DeviceBuffer d(m, n);
-        d.A = A;
-        d.X = X;
 
         // We don't include d_R in device buffers because it is only used once at the beginning
         // of the algorithm.
@@ -215,16 +211,16 @@ namespace dr_bcg
             (*iterations)++;
 
             // xi = (s' * A * s)^-1
-            quadratic_form(cublasH, m, n, d.s, d.A, d.temp, d.xi);
+            quadratic_form(cublasH, m, n, d.s, A, d.temp, d.xi);
 
             invert_spd(cusolverH, cusolverParams, d.xi, n);
 
             // X = X + s * xi * sigma
-            next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, d.X);
+            next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, X);
 
             // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
             float relative_residual_norm;
-            residual(cublasH, d.residual, B, m, d.A, d.X);
+            residual(cublasH, d.residual, B, m, A, X);
 
             CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, d.residual, 1, &relative_residual_norm));
             relative_residual_norm /= B1_norm;
@@ -239,7 +235,7 @@ namespace dr_bcg
                 float alpha = 1;
                 float beta = 0;
                 CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, m,
-                                            &alpha, d.A, m, d.s, m,
+                                            &alpha, A, m, d.s, m,
                                             &beta, d.temp, m));
 
                 // w - temp * xi
@@ -270,8 +266,6 @@ namespace dr_bcg
                 CUDA_CHECK(cudaMemcpy(d.sigma, d.temp, sizeof(float) * n * n, cudaMemcpyDeviceToDevice));
             }
         }
-
-        CUDA_CHECK(cudaMemcpy(X, d.X, sizeof(float) * m * n, cudaMemcpyDeviceToHost));
 
         return CUSOLVER_STATUS_SUCCESS;
     }
