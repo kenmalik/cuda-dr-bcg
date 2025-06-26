@@ -42,3 +42,5 @@ void fill_spd(float *mat, const int n);
 void print_matrix(const float *mat, const int rows, const int cols);
 
 void print_device_matrix(const float *d_mat, const int rows, const int cols);
+
+void check_nan(const float *d_arr, size_t size, std::string step);

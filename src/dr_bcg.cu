@@ -204,6 +204,7 @@ namespace dr_bcg
 
         // s = w
         CUDA_CHECK(cudaMemcpy(d.s, d.w, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
+        print_device_matrix(d.s, m, n);
 
         float B1_norm;
         CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, B, 1, &B1_norm));
@@ -215,6 +216,7 @@ namespace dr_bcg
 
             // xi = (s' * A * s)^-1
             quadratic_form(cublasH, m, n, d.s, d.A, d.temp, d.xi);
+
             invert_spd(cusolverH, cusolverParams, d.xi, n);
 
             // X = X + s * xi * sigma
@@ -223,6 +225,7 @@ namespace dr_bcg
             // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
             float relative_residual_norm;
             residual(cublasH, d.residual, B, m, d.A, d.X);
+
             CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, d.residual, 1, &relative_residual_norm));
             relative_residual_norm /= B1_norm;
 
@@ -460,6 +463,7 @@ namespace dr_bcg
      */
     void invert_spd(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *d_A, const int n)
     {
+        // Cholesky Decomposition
         size_t workspaceInBytesOnDevice = 0;
         void *d_work = nullptr;
         size_t workspaceInBytesOnHost = 0;
@@ -500,6 +504,7 @@ namespace dr_bcg
         }
         CUDA_CHECK(cudaFree(d_work));
 
+        // Inversion
         float *d_work_Spotri = nullptr;
         int lwork_Spotri = 0;
         info = 0;

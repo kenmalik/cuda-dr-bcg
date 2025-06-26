@@ -11,4 +11,4 @@
 #SBATCH --no-requeue
 #SBATCH -t 01:00:00
 
-srun build/example
+srun build/examples/example_0/example_0
