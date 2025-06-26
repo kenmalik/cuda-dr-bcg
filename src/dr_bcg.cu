@@ -89,6 +89,28 @@ __global__ void symmetrize_matrix(float *A, const int n)
     }
 }
 
+/**
+ * @brief CUDA kernel to copy upper triangular of a matrix stored in column-major order.
+ *
+ * @param dst Pointer to destination device matrix (n x n)
+ * @param src Pointer to source device matrix (n x n)
+ * @param n Matrix dimension
+ */
+__global__ void copy_upper_triangular(float *dst, float *src, const int n)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (col <= row && row < n && col < n)
+    {
+        dst[row * n + col] = src[row * n + col];
+    }
+    else
+    {
+        dst[row * n + col] = 0;
+    }
+}
+
 namespace dr_bcg
 {
     /**
@@ -420,6 +442,12 @@ namespace dr_bcg
         }
 
         const int max_R_col = std::min(m, n);
+
+        constexpr int block_n = 16;
+        dim3 block_dim(block_n, block_n);
+        dim3 grid_dim((n + block_n - 1) / block_n, (n + block_n - 1) / block_n);
+        copy_upper_triangular<<<grid_dim, block_dim>>>(R, Q, n);
+
         for (int col = 0; col < max_R_col; col++)
         {
             CUDA_CHECK(cudaMemcpy(R + col * n, Q + col * m, sizeof(float) * (col + 1), cudaMemcpyDeviceToDevice));
