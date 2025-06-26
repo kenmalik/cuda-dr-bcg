@@ -9,7 +9,7 @@ enable_language(CUDA)
 
 option(DR_BCG_BUILD_TESTS "Enable tests" OFF)
 option(DR_BCG_BUILD_BENCHMARKS "Enable benchmarks" OFF)
-option(DR_BCG_BUILD_BENCHMARKS "Enable examples" OFF)
+option(DR_BCG_BUILD_EXAMPLES "Enable examples" OFF)
 
 set(CMAKE_CUDA_ARCHITECTURES 80)
 
