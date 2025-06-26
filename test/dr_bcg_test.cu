@@ -163,7 +163,13 @@ TEST(Residual, OutputCorrect)
         1, 2, 3,
         2, 3, 4,
         3, 4, 5};
-    float *d_X;
+
+    float *d_B = nullptr;
+    float *d_X = nullptr;
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_B), sizeof(float) * h_B.size()));
+    CUDA_CHECK(cudaMemcpy(d_B, h_B.data(), sizeof(float) * h_B.size(), cudaMemcpyHostToDevice));
+
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * h_X.size()));
     CUDA_CHECK(cudaMemcpy(d_X, h_X.data(), sizeof(float) * h_X.size(), cudaMemcpyHostToDevice));
 
@@ -182,15 +188,18 @@ TEST(Residual, OutputCorrect)
     CUBLAS_CHECK(cublasCreate_v2(&cublasH));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_residual), sizeof(float) * h_residual.size()));
 
-    dr_bcg::residual(cublasH, d_residual, h_B.data(), m, d_A, d_X);
+    dr_bcg::residual(cublasH, d_residual, d_B, m, d_A, d_X);
 
     CUDA_CHECK(cudaMemcpy(h_residual.data(), d_residual, sizeof(float) * h_residual.size(), cudaMemcpyDeviceToHost));
 
     std::vector<float> expected = {-29, -34, -39};
     ASSERT_EQ(h_residual, expected);
+
+    CUDA_CHECK(cudaFree(d_B));
+    CUDA_CHECK(cudaFree(d_X));
 }
 
-TEST(InvertSPD, OutputCorrect)
+TEST(InvertSquareMatrix, OutputCorrect)
 {
     constexpr float tolerance = 0.001;
 
@@ -226,7 +235,7 @@ TEST(InvertSPD, OutputCorrect)
     CUDA_CHECK(cudaMemcpy(d_A_inv, h_A_in.data(), sizeof(float) * h_A_in.size(), cudaMemcpyHostToDevice));
 
     // Operation
-    dr_bcg::invert_spd(cusolverH, cusolverParams, d_A, m);
+    dr_bcg::invert_square_matrix(cusolverH, cusolverParams, d_A, m);
 
     // Test A * A_inv = I
     constexpr float alpha = 1;

@@ -14,8 +14,6 @@
  */
 struct DeviceBuffer
 {
-    const float *A = nullptr;  ///< Device pointer for matrix A (m x m)
-    float *X = nullptr;        ///< Device pointer for matrix X (m x n)
     float *w = nullptr;        ///< Device pointer for matrix w (m x n)
     float *sigma = nullptr;    ///< Device pointer for matrix sigma (n x n)
     float *s = nullptr;        ///< Device pointer for matrix s (m x n)
@@ -88,6 +86,28 @@ __global__ void symmetrize_matrix(float *A, const int n)
     if (row < col && row < n && col < n)
     {
         A[col * n + row] = A[row * n + col];
+    }
+}
+
+/**
+ * @brief CUDA kernel to copy upper triangular of a matrix stored in column-major order.
+ *
+ * @param dst Pointer to destination device matrix (n x n)
+ * @param src Pointer to source device matrix (n x n)
+ * @param n Matrix dimension
+ */
+__global__ void copy_upper_triangular(float *dst, float *src, const int n)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (col <= row && row < n && col < n)
+    {
+        dst[row * n + col] = src[row * n + col];
+    }
+    else
+    {
+        dst[row * n + col] = 0;
     }
 }
 
@@ -186,8 +206,6 @@ namespace dr_bcg
         int *iterations)
     {
         DeviceBuffer d(m, n);
-        d.A = A;
-        d.X = X;
 
         // We don't include d_R in device buffers because it is only used once at the beginning
         // of the algorithm.
@@ -204,6 +222,7 @@ namespace dr_bcg
 
         // s = w
         CUDA_CHECK(cudaMemcpy(d.s, d.w, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
+        print_device_matrix(d.s, m, n);
 
         float B1_norm;
         CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, B, 1, &B1_norm));
@@ -214,15 +233,17 @@ namespace dr_bcg
             (*iterations)++;
 
             // xi = (s' * A * s)^-1
-            quadratic_form(cublasH, m, n, d.s, d.A, d.temp, d.xi);
-            invert_spd(cusolverH, cusolverParams, d.xi, n);
+            quadratic_form(cublasH, m, n, d.s, A, d.temp, d.xi);
+
+            invert_square_matrix(cusolverH, cusolverParams, d.xi, n);
 
             // X = X + s * xi * sigma
-            next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, d.X);
+            next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, X);
 
             // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
             float relative_residual_norm;
-            residual(cublasH, d.residual, B, m, d.A, d.X);
+            residual(cublasH, d.residual, B, m, A, X);
+
             CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, d.residual, 1, &relative_residual_norm));
             relative_residual_norm /= B1_norm;
 
@@ -236,7 +257,7 @@ namespace dr_bcg
                 float alpha = 1;
                 float beta = 0;
                 CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, m,
-                                            &alpha, d.A, m, d.s, m,
+                                            &alpha, A, m, d.s, m,
                                             &beta, d.temp, m));
 
                 // w - temp * xi
@@ -267,8 +288,6 @@ namespace dr_bcg
                 CUDA_CHECK(cudaMemcpy(d.sigma, d.temp, sizeof(float) * n * n, cudaMemcpyDeviceToDevice));
             }
         }
-
-        CUDA_CHECK(cudaMemcpy(X, d.X, sizeof(float) * m * n, cudaMemcpyDeviceToHost));
 
         return CUSOLVER_STATUS_SUCCESS;
     }
@@ -423,6 +442,12 @@ namespace dr_bcg
         }
 
         const int max_R_col = std::min(m, n);
+
+        constexpr int block_n = 16;
+        dim3 block_dim(block_n, block_n);
+        dim3 grid_dim((n + block_n - 1) / block_n, (n + block_n - 1) / block_n);
+        copy_upper_triangular<<<grid_dim, block_dim>>>(R, Q, n);
+
         for (int col = 0; col < max_R_col; col++)
         {
             CUDA_CHECK(cudaMemcpy(R + col * n, Q + col * m, sizeof(float) * (col + 1), cudaMemcpyDeviceToDevice));
@@ -458,8 +483,9 @@ namespace dr_bcg
      * @param d_A Device pointer to the symmetric positive definite matrix to invert. Result is overwritten to pointed location.
      * @param n Matrix dimension
      */
-    void invert_spd(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *d_A, const int n)
+    void invert_square_matrix(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *d_A, const int n)
     {
+        // LU Decomposition
         size_t workspaceInBytesOnDevice = 0;
         void *d_work = nullptr;
         size_t workspaceInBytesOnHost = 0;
@@ -468,64 +494,66 @@ namespace dr_bcg
         int info = 0;
         int *d_info = nullptr;
 
+        std::vector<int64_t> h_Ipiv(n, 0);
+        int64_t *d_Ipiv = nullptr;
+
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_Ipiv), sizeof(int64_t) * h_Ipiv.size()));
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
 
-        CUSOLVER_CHECK(cusolverDnXpotrf_bufferSize(cusolverH, params, CUBLAS_FILL_MODE_LOWER,
-                                                   n, CUDA_R_32F, d_A, n, CUDA_R_32F,
+        CUSOLVER_CHECK(cusolverDnXgetrf_bufferSize(cusolverH, params, n, n,
+                                                   CUDA_R_32F, d_A, n, CUDA_R_32F,
                                                    &workspaceInBytesOnDevice, &workspaceInBytesOnHost));
 
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), workspaceInBytesOnDevice));
         if (0 < workspaceInBytesOnHost)
         {
-            h_work = reinterpret_cast<void *>(malloc(sizeof(float) * workspaceInBytesOnHost));
+            h_work = reinterpret_cast<void *>(malloc(workspaceInBytesOnHost));
             if (h_work == nullptr)
             {
                 throw std::runtime_error("Error: h_work not allocated.");
             }
         }
 
-        CUSOLVER_CHECK(cusolverDnXpotrf(cusolverH, params, CUBLAS_FILL_MODE_LOWER,
-                                        n, CUDA_R_32F, d_A, n,
-                                        CUDA_R_32F, d_work, workspaceInBytesOnDevice,
+        CUSOLVER_CHECK(cusolverDnXgetrf(cusolverH, params, n, n,
+                                        CUDA_R_32F, d_A, n, d_Ipiv, CUDA_R_32F,
+                                        d_work, workspaceInBytesOnDevice,
                                         h_work, workspaceInBytesOnHost, d_info));
 
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
         {
-            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong.");
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
         }
-        if (info > 0)
-        {
-            throw std::runtime_error("Smallest leading minor " + std::to_string(info) + " is not positive definite.");
-        }
-        CUDA_CHECK(cudaFree(d_work));
 
-        float *d_work_Spotri = nullptr;
-        int lwork_Spotri = 0;
-        info = 0;
-        CUSOLVER_CHECK(cusolverDnSpotri_bufferSize(cusolverH, CUBLAS_FILL_MODE_LOWER, n,
-                                                   d_A, n, &lwork_Spotri));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work_Spotri), lwork_Spotri));
-        CUSOLVER_CHECK(cusolverDnSpotri(cusolverH, CUBLAS_FILL_MODE_LOWER, n,
-                                        d_A, n, d_work_Spotri, lwork_Spotri, d_info));
+        CUDA_CHECK(cudaFree(d_work));
+        free(h_work);
+
+        // Solve A * X = I for inverse
+        std::vector<float> h_I(n * n, 0);
+        float *d_I = nullptr;
+
+        for (int i = 0; i < n; i++)
+        {
+            h_I.at(i * n + i) = 1;
+        }
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_I), sizeof(float) * h_I.size()));
+        CUDA_CHECK(cudaMemcpy(d_I, h_I.data(), sizeof(float) * h_I.size(), cudaMemcpyHostToDevice));
+
+        CUSOLVER_CHECK(cusolverDnXgetrs(cusolverH, params, CUBLAS_OP_N, n, n,
+                                        CUDA_R_32F, d_A, n, d_Ipiv, CUDA_R_32F,
+                                        d_I, n, d_info));
 
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
         {
-            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong.");
-        }
-        if (info > 0)
-        {
-            throw std::runtime_error("Leading minor of order " + std::to_string(info) + " is zero.");
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
         }
 
-        constexpr int block_n = 16;
-        dim3 block_dim(block_n, block_n);
-        dim3 grid_dim((n + block_n - 1) / block_n, (n + block_n - 1) / block_n);
-        symmetrize_matrix<<<grid_dim, block_dim>>>(d_A, n);
+        CUDA_CHECK(cudaMemcpy(d_A, d_I, sizeof(float) * h_I.size(), cudaMemcpyDeviceToDevice));
 
-        CUDA_CHECK(cudaFree(d_work_Spotri));
+        CUDA_CHECK(cudaFree(d_I));
 
+        CUDA_CHECK(cudaFree(d_Ipiv));
         CUDA_CHECK(cudaFree(d_info));
     }
 }

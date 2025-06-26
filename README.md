@@ -77,6 +77,16 @@ See the convenience wrapper implementation for an example of how to call this in
 
 ## Running Examples
 
+To build the examples, provide the following flags to CMake:
+
+```bash
+cmake -B build -S . -DDR_BCG_BUILD_EXAMPLES=ON
+```
+
+After building, this will add an additional `examples` subdirectory under `build` containing executables for each example.
+
+### On SLURM
+
 This library was initially developed on a system running SLURM and hence contains some conveniences for running examples.
 
 The Makefile in the root directory contains a target `run` which will run a SLURM script using `srun`.
