@@ -1,7 +1,5 @@
 #!/bin/bash
 #SBATCH --job-name="dr_bcg_benchmark"
-#SBATCH --output="output/dr_bcg_benchmark.%j.%N.out"
-#SBATCH --error="output/dr_bcg_benchmark.%j.%N.err"
 #SBATCH --partition=gpuA40x4
 #SBATCH --mem=20G
 #SBATCH --nodes=1
@@ -11,4 +9,4 @@
 #SBATCH --no-requeue
 #SBATCH -t 00:30:00
 
-srun build/benchmark/dr_bcg_benchmark --benchmark_counters_tabular=true --benchmark_out_format=json --benchmark_out=dr_bcg.bench.json
+srun build/benchmark/dr_bcg_benchmark --benchmark_out_format=json --benchmark_out=${OUT_DIR}/${SLURM_JOB_NAME}.${SLURM_JOB_ID}.${SLURMD_NODENAME}.json
