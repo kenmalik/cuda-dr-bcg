@@ -207,6 +207,8 @@ namespace dr_bcg
         int max_iterations,
         int *iterations)
     {
+        NVTX3_FUNC_RANGE();
+
         DeviceBuffer d(m, n);
 
         // We don't include d_R in device buffers because it is only used once at the beginning
@@ -405,6 +407,8 @@ namespace dr_bcg
      */
     void qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *Q, float *R, const int m, const int n, const float *A)
     {
+        NVTX3_FUNC_RANGE();
+
         int k = std::min(m, n);
         int info = 0;
 
@@ -490,6 +494,8 @@ namespace dr_bcg
      */
     void invert_square_matrix(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *d_A, const int n)
     {
+        NVTX3_FUNC_RANGE();
+
         // LU Decomposition
         size_t workspaceInBytesOnDevice = 0;
         void *d_work = nullptr;
