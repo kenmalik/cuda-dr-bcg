@@ -3,6 +3,8 @@
 #include <tuple>
 #include <string>
 
+#include <nvtx3/nvtx3.hpp>
+
 #include "dr_bcg/dr_bcg.h"
 #include "dr_bcg/helper.h"
 
@@ -229,6 +231,8 @@ namespace dr_bcg
         *iterations = 0;
         while (*iterations < max_iterations)
         {
+            nvtx3::scoped_range loop{"iteration_" + std::to_string(*iterations)};
+
             (*iterations)++;
 
             // xi = (s' * A * s)^-1
@@ -252,6 +256,8 @@ namespace dr_bcg
             }
             else
             {
+                nvtx3::scoped_range new_s_and_sigma{"get_new_s_and_sigma"};
+
                 // temp = A * s
                 float alpha = 1;
                 float beta = 0;
