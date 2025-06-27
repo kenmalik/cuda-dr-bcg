@@ -28,8 +28,8 @@ private:
         cudaDeviceProp prop;
         CUDA_CHECK(cudaGetDeviceProperties(&prop, device));
 
-        benchmark::AddCustomContext("Device", prop.name);
-        benchmark::AddCustomContext("Compute Capability", std::to_string(prop.major) + "." + std::to_string(prop.minor));
+        benchmark::AddCustomContext("device", prop.name);
+        benchmark::AddCustomContext("compute_capability", std::to_string(prop.major) + "." + std::to_string(prop.minor));
     }
 };
 
@@ -70,7 +70,6 @@ BENCHMARK_DEFINE_F(Benchmark, DR_BCG)(benchmark::State &state)
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    // Benchmark
     for (auto _ : state)
     {
         cudaEvent_t start, stop;
@@ -98,4 +97,4 @@ BENCHMARK_DEFINE_F(Benchmark, DR_BCG)(benchmark::State &state)
     state.counters["performed_algorithm_iterations"] = iterations;
     state.counters["max_algorithm_iterations"] = max_iterations;
 }
-BENCHMARK_REGISTER_F(Benchmark, DR_BCG)->MinWarmUpTime(1.0)->UseManualTime()->Unit(benchmark::kMillisecond)->RangeMultiplier(2)->Ranges({{64, 256}, {4, 16}});
+BENCHMARK_REGISTER_F(Benchmark, DR_BCG)->MinWarmUpTime(1.0)->UseManualTime()->Unit(benchmark::kMillisecond)->RangeMultiplier(2)->Ranges({{64, 1024}, {8, 32}});
