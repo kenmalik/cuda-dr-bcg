@@ -68,13 +68,6 @@ BENCHMARK_DEFINE_F(Benchmark, DR_BCG)(benchmark::State &state)
     CUDA_CHECK(cudaMemcpy(d_X, X.data(), sizeof(float) * m * n, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_B, B.data(), sizeof(float) * m * n, cudaMemcpyHostToDevice));
 
-    // Warmup
-    constexpr int warm_up_iterations = 10;
-    for (int i = 0; i < warm_up_iterations; i++)
-    {
-        dr_bcg::dr_bcg(cusolverH, cusolverParams, cublasH, m, n, d_A, d_X, d_B, tolerance, max_iterations, &iterations);
-    }
-
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // Benchmark
@@ -102,7 +95,7 @@ BENCHMARK_DEFINE_F(Benchmark, DR_BCG)(benchmark::State &state)
     CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
     CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
 
-    state.counters["PerformedAlgorithmIterations"] = iterations;
-    state.counters["MaxAlgorithmIterations"] = max_iterations;
+    state.counters["performed_algorithm_iterations"] = iterations;
+    state.counters["max_algorithm_iterations"] = max_iterations;
 }
-BENCHMARK_REGISTER_F(Benchmark, DR_BCG)->UseManualTime()->Unit(benchmark::kMillisecond)->RangeMultiplier(2)->Ranges({{64, 256}, {4, 16}});
+BENCHMARK_REGISTER_F(Benchmark, DR_BCG)->MinWarmUpTime(1.0)->UseManualTime()->Unit(benchmark::kMillisecond)->RangeMultiplier(2)->Ranges({{64, 256}, {4, 16}});
