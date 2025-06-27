@@ -9,7 +9,31 @@
 #include "dr_bcg/dr_bcg.h"
 #include "dr_bcg/helper.h"
 
-static void BM_DR_BCG(benchmark::State &state)
+static bool context_added = false;
+
+class Benchmark : public benchmark::Fixture {
+public:
+    Benchmark() {
+        if (!context_added) {
+            add_context();
+            context_added = true;
+        }
+    }
+
+private:
+    void add_context() {
+        int device = 0;
+        CUDA_CHECK(cudaGetDevice(&device));
+        
+        cudaDeviceProp prop;
+        CUDA_CHECK(cudaGetDeviceProperties(&prop, device));
+
+        benchmark::AddCustomContext("device", prop.name);
+        benchmark::AddCustomContext("compute_capability", std::to_string(prop.major) + "." + std::to_string(prop.minor));
+    }
+};
+
+BENCHMARK_DEFINE_F(Benchmark, DR_BCG)(benchmark::State &state)
 {
     const int m = state.range(0);
     const int n = state.range(1);
@@ -44,16 +68,8 @@ static void BM_DR_BCG(benchmark::State &state)
     CUDA_CHECK(cudaMemcpy(d_X, X.data(), sizeof(float) * m * n, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_B, B.data(), sizeof(float) * m * n, cudaMemcpyHostToDevice));
 
-    // Warmup
-    constexpr int warm_up_iterations = 10;
-    for (int i = 0; i < warm_up_iterations; i++)
-    {
-        dr_bcg::dr_bcg(cusolverH, cusolverParams, cublasH, m, n, d_A, d_X, d_B, tolerance, max_iterations, &iterations);
-    }
-
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    // Benchmark
     for (auto _ : state)
     {
         cudaEvent_t start, stop;
@@ -77,5 +93,8 @@ static void BM_DR_BCG(benchmark::State &state)
     CUBLAS_CHECK(cublasDestroy_v2(cublasH));
     CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
     CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
+
+    state.counters["performed_algorithm_iterations"] = iterations;
+    state.counters["max_algorithm_iterations"] = max_iterations;
 }
-BENCHMARK(BM_DR_BCG)->UseManualTime()->Unit(benchmark::kMillisecond)->RangeMultiplier(2)->Ranges({{64, 256}, {4, 16}});
+BENCHMARK_REGISTER_F(Benchmark, DR_BCG)->MinWarmUpTime(1.0)->UseManualTime()->Unit(benchmark::kMillisecond)->RangeMultiplier(2)->Ranges({{64, 1024}, {8, 32}});

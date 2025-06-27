@@ -222,7 +222,6 @@ namespace dr_bcg
 
         // s = w
         CUDA_CHECK(cudaMemcpy(d.s, d.w, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
-        print_device_matrix(d.s, m, n);
 
         float B1_norm;
         CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, B, 1, &B1_norm));

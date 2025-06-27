@@ -42,5 +42,10 @@
 # Python
 .venv
 
+# Benchmark Output
+*.bench
+*.bench.csv
+*.bench.json
+
 build/
 output/
