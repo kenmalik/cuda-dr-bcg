@@ -9,7 +9,31 @@
 #include "dr_bcg/dr_bcg.h"
 #include "dr_bcg/helper.h"
 
-static void BM_DR_BCG(benchmark::State &state)
+static bool context_added = false;
+
+class DR_BCG_Benchmark : public benchmark::Fixture {
+public:
+    DR_BCG_Benchmark() {
+        if (!context_added) {
+            add_context();
+            context_added = true;
+        }
+    }
+
+private:
+    void add_context() {
+        int device = 0;
+        CUDA_CHECK(cudaGetDevice(&device));
+        
+        cudaDeviceProp prop;
+        CUDA_CHECK(cudaGetDeviceProperties(&prop, device));
+
+        benchmark::AddCustomContext("Device", prop.name);
+        benchmark::AddCustomContext("Compute Capability", std::to_string(prop.major) + "." + std::to_string(prop.minor));
+    }
+};
+
+BENCHMARK_DEFINE_F(DR_BCG_Benchmark, BM_DR_BCG)(benchmark::State &state)
 {
     const int m = state.range(0);
     const int n = state.range(1);
@@ -78,4 +102,4 @@ static void BM_DR_BCG(benchmark::State &state)
     CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
     CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
 }
-BENCHMARK(BM_DR_BCG)->UseManualTime()->Unit(benchmark::kMillisecond)->RangeMultiplier(2)->Ranges({{64, 256}, {4, 16}});
+BENCHMARK_REGISTER_F(DR_BCG_Benchmark, BM_DR_BCG)->UseManualTime()->Unit(benchmark::kMillisecond)->RangeMultiplier(2)->Ranges({{64, 256}, {4, 16}});
