@@ -11,9 +11,9 @@
 
 static bool context_added = false;
 
-class DR_BCG_Benchmark : public benchmark::Fixture {
+class Benchmark : public benchmark::Fixture {
 public:
-    DR_BCG_Benchmark() {
+    Benchmark() {
         if (!context_added) {
             add_context();
             context_added = true;
@@ -33,7 +33,7 @@ private:
     }
 };
 
-BENCHMARK_DEFINE_F(DR_BCG_Benchmark, BM_DR_BCG)(benchmark::State &state)
+BENCHMARK_DEFINE_F(Benchmark, DR_BCG)(benchmark::State &state)
 {
     const int m = state.range(0);
     const int n = state.range(1);
@@ -101,5 +101,8 @@ BENCHMARK_DEFINE_F(DR_BCG_Benchmark, BM_DR_BCG)(benchmark::State &state)
     CUBLAS_CHECK(cublasDestroy_v2(cublasH));
     CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
     CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
+
+    state.counters["PerformedAlgorithmIterations"] = iterations;
+    state.counters["MaxAlgorithmIterations"] = max_iterations;
 }
-BENCHMARK_REGISTER_F(DR_BCG_Benchmark, BM_DR_BCG)->UseManualTime()->Unit(benchmark::kMillisecond)->RangeMultiplier(2)->Ranges({{64, 256}, {4, 16}});
+BENCHMARK_REGISTER_F(Benchmark, DR_BCG)->UseManualTime()->Unit(benchmark::kMillisecond)->RangeMultiplier(2)->Ranges({{64, 256}, {4, 16}});
