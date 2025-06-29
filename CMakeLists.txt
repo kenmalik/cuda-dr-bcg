@@ -13,15 +13,7 @@ option(DR_BCG_BUILD_EXAMPLES "Enable examples" OFF)
 
 set(CMAKE_CUDA_ARCHITECTURES 80)
 
-add_library(dr_bcg
-    "src/dr_bcg.cu"
-    "src/helper.cu"
-)
-target_include_directories(dr_bcg PUBLIC "include")
-target_link_libraries(dr_bcg PUBLIC CUDA::cublas CUDA::cusolver)
-target_compile_options(dr_bcg PUBLIC
-    $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
-)
+add_subdirectory("src")
 
 if(DR_BCG_BUILD_TESTS)
     add_subdirectory("test")

@@ -3,6 +3,8 @@
 #include <tuple>
 #include <string>
 
+#include <nvtx3/nvtx3.hpp>
+
 #include "dr_bcg/dr_bcg.h"
 #include "dr_bcg/helper.h"
 
@@ -205,7 +207,11 @@ namespace dr_bcg
         int max_iterations,
         int *iterations)
     {
+        NVTX3_FUNC_RANGE();
+
         DeviceBuffer d(m, n);
+
+        CUBLAS_CHECK(cublasSetMathMode(cublasH, CUBLAS_TF32_TENSOR_OP_MATH));
 
         // We don't include d_R in device buffers because it is only used once at the beginning
         // of the algorithm.
@@ -222,7 +228,6 @@ namespace dr_bcg
 
         // s = w
         CUDA_CHECK(cudaMemcpy(d.s, d.w, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
-        print_device_matrix(d.s, m, n);
 
         float B1_norm;
         CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, B, 1, &B1_norm));
@@ -230,6 +235,8 @@ namespace dr_bcg
         *iterations = 0;
         while (*iterations < max_iterations)
         {
+            nvtx3::scoped_range loop{"iteration_" + std::to_string(*iterations)};
+
             (*iterations)++;
 
             // xi = (s' * A * s)^-1
@@ -253,6 +260,8 @@ namespace dr_bcg
             }
             else
             {
+                nvtx3::scoped_range new_s_and_sigma{"get_new_s_and_sigma"};
+
                 // temp = A * s
                 float alpha = 1;
                 float beta = 0;
@@ -400,6 +409,8 @@ namespace dr_bcg
      */
     void qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *Q, float *R, const int m, const int n, const float *A)
     {
+        NVTX3_FUNC_RANGE();
+
         int k = std::min(m, n);
         int info = 0;
 
@@ -485,6 +496,8 @@ namespace dr_bcg
      */
     void invert_square_matrix(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *d_A, const int n)
     {
+        NVTX3_FUNC_RANGE();
+
         // LU Decomposition
         size_t workspaceInBytesOnDevice = 0;
         void *d_work = nullptr;
