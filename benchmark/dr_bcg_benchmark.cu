@@ -11,20 +11,24 @@
 
 static bool context_added = false;
 
-class Benchmark : public benchmark::Fixture {
+class Benchmark : public benchmark::Fixture
+{
 public:
-    Benchmark() {
-        if (!context_added) {
+    Benchmark()
+    {
+        if (!context_added)
+        {
             add_context();
             context_added = true;
         }
     }
 
 private:
-    void add_context() {
+    void add_context()
+    {
         int device = 0;
         CUDA_CHECK(cudaGetDevice(&device));
-        
+
         cudaDeviceProp prop;
         CUDA_CHECK(cudaGetDeviceProperties(&prop, device));
 
@@ -37,8 +41,8 @@ BENCHMARK_DEFINE_F(Benchmark, DR_BCG)(benchmark::State &state)
 {
     const int m = state.range(0);
     const int n = state.range(1);
-    constexpr float tolerance = 0.01;
-    constexpr int max_iterations = 128;
+    constexpr float tolerance = 1e-6;
+    constexpr int max_iterations = 2048;
 
     std::vector<float> A(m * m);
     fill_spd(A.data(), m);
@@ -97,4 +101,9 @@ BENCHMARK_DEFINE_F(Benchmark, DR_BCG)(benchmark::State &state)
     state.counters["performed_algorithm_iterations"] = iterations;
     state.counters["max_algorithm_iterations"] = max_iterations;
 }
-BENCHMARK_REGISTER_F(Benchmark, DR_BCG)->MinWarmUpTime(1.0)->UseManualTime()->Unit(benchmark::kMillisecond)->RangeMultiplier(2)->Ranges({{64, 1024}, {8, 32}});
+BENCHMARK_REGISTER_F(Benchmark, DR_BCG)
+    ->MinWarmUpTime(1.0)
+    ->UseManualTime()
+    ->Unit(benchmark::kMillisecond)
+    ->RangeMultiplier(2)
+    ->Ranges({{2048, 8192}, {4, 16}});

@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name="dr_bcg_benchmark"
-#SBATCH --partition=gpuA40x4
+#SBATCH --partition=gpuA100x4
 #SBATCH --mem=20G
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
