@@ -107,11 +107,8 @@ __global__ void copy_upper_triangular(float *dst, float *src, const int n)
     {
         dst[row * n + col] = src[row * n + col];
     }
-    else
-    {
-        dst[row * n + col] = 0;
-    }
 }
+
 
 namespace dr_bcg
 {
@@ -221,7 +218,6 @@ namespace dr_bcg
         // R = B - AX
         get_R(cublasH, d_R, m, n, A, X, B);
 
-        // [w, sigma] = qr(R)
         qr_factorization(cusolverH, cusolverParams, d.w, d.sigma, m, n, d_R);
 
         CUDA_CHECK(cudaFree(d_R)); // Never used later
@@ -484,6 +480,118 @@ namespace dr_bcg
         CUDA_CHECK(cudaFree(d_info));
         CUDA_CHECK(cudaFree(d_tau));
         CUDA_CHECK(cudaFree(d_work));
+    }
+
+    void thin_qr(
+        cusolverDnHandle_t &cusolverH,
+        cusolverDnParams_t &params,
+        cublasHandle_t &cublasH,
+        float *Q,
+        float *R,
+        const int m,
+        const int n,
+        const float *A)
+    {
+        // H = M^T * M
+        float *d_H = nullptr;
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_H), sizeof(float) * n * n));
+
+        constexpr float alpha = 1;
+        constexpr float beta = 0;
+        CUBLAS_CHECK(cublasSgemm_v2(
+            cublasH, CUBLAS_OP_T, CUBLAS_OP_N, n, n, m,
+            &alpha, A, m, A, m,
+            &beta, d_H, n));
+
+        // R^T * R = H
+        void *h_work = nullptr;
+        size_t h_lwork_Xpotrf = 0;
+        void *d_work = nullptr;
+        size_t d_lwork_Xpotrf = 0;
+
+        int info = 0;
+        int *d_info = nullptr;
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
+
+        CUSOLVER_CHECK(cusolverDnXpotrf_bufferSize(
+            cusolverH, params, CUBLAS_FILL_MODE_UPPER, n,
+            CUDA_R_32F, d_H, n,
+            CUDA_R_32F, &d_lwork_Xpotrf, &h_lwork_Xpotrf));
+
+        if (h_lwork_Xpotrf > 0)
+        {
+            h_work = reinterpret_cast<void *>(malloc(h_lwork_Xpotrf));
+            if (h_work == nullptr)
+            {
+                throw std::runtime_error("Error: h_work not allocated.");
+            }
+        }
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), d_lwork_Xpotrf));
+
+        CUSOLVER_CHECK(cusolverDnXpotrf(
+            cusolverH, params, CUBLAS_FILL_MODE_UPPER, n,
+            CUDA_R_32F, d_H, n,
+            CUDA_R_32F, d_work, d_lwork_Xpotrf, h_work, h_lwork_Xpotrf, d_info));
+
+        CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
+        if (info < 0)
+        {
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
+        }
+
+        constexpr int block_n = 16;
+        dim3 block_dim(block_n, block_n);
+        dim3 grid_dim((n + block_n - 1) / block_n, (n + block_n - 1) / block_n);
+        copy_upper_triangular<<<grid_dim, block_dim>>>(R, d_H, n);
+
+        // Q = M * R^-1
+        size_t d_lwork_Xtrtri = 0;
+        size_t h_lwork_Xtrtri = 0;
+        info = 0;
+
+        CUSOLVER_CHECK(cusolverDnXtrtri_bufferSize(
+            cusolverH, CUBLAS_FILL_MODE_UPPER, CUBLAS_DIAG_NON_UNIT, n,
+            CUDA_R_32F, d_H, n,
+            &d_lwork_Xtrtri, &h_lwork_Xtrtri));
+
+        if (h_lwork_Xtrtri > h_lwork_Xpotrf)
+        {
+            if (h_work != nullptr)
+            {
+                free(h_work);
+            }
+            h_work = reinterpret_cast<void *>(malloc(h_lwork_Xtrtri));
+        }
+        if (d_lwork_Xtrtri > d_lwork_Xpotrf)
+        {
+            CUDA_CHECK(cudaFree(d_work));
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), d_lwork_Xtrtri));
+        }
+
+        CUSOLVER_CHECK(cusolverDnXtrtri(
+            cusolverH, CUBLAS_FILL_MODE_UPPER, CUBLAS_DIAG_NON_UNIT, n,
+            CUDA_R_32F, d_H, n,
+            d_work, d_lwork_Xtrtri, h_work, h_lwork_Xtrtri, d_info));
+
+        CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
+        if (info < 0)
+        {
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
+        }
+
+        CUBLAS_CHECK(cublasStrmm_v2(
+            cublasH, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER,
+            CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT, m, n,
+            &alpha, d_H, n, A, m, Q, m));
+
+        if (h_work != nullptr)
+        {
+            free(h_work);
+        }
+        CUDA_CHECK(cudaFree(d_work));
+        CUDA_CHECK(cudaFree(d_info));
+
+        CUDA_CHECK(cudaFree(d_H));
     }
 
     /**
