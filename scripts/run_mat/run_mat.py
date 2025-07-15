@@ -17,7 +17,7 @@ def run_mat(file_name: str, command_args: list[str], matrix_name="A", problem_na
         raise AttributeError(f"Matrix with name {matrix_name} not found in problem") from e
 
     with NamedTemporaryFile() as tmp:
-        print(f"Converting {file_name} to temp file")
+        print(f"Converting {file_name} to temp file", file=sys.stderr)
         dense = mat.toarray()
         dense.T.tofile(tmp.name)
 
@@ -29,7 +29,7 @@ def run_mat(file_name: str, command_args: list[str], matrix_name="A", problem_na
             elif arg == "{n}":
                 command_args[i] = str(problem.A.shape[1])
 
-        print(f"Running the following command: '{' '.join(command_args)}'", )
+        print(f"Running the following command: '{' '.join(command_args)}'", file=sys.stderr)
 
         res = subprocess.run(
             command_args, check=True, capture_output=True, text=True
