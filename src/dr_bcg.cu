@@ -218,7 +218,7 @@ namespace dr_bcg
         // R = B - AX
         get_R(cublasH, d_R, m, n, A, X, B);
 
-        qr_factorization(cusolverH, cusolverParams, d.w, d.sigma, m, n, d_R);
+        thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.sigma, m, n, d_R);
 
         CUDA_CHECK(cudaFree(d_R)); // Never used later
 
@@ -272,7 +272,7 @@ namespace dr_bcg
                                             &alpha, d.temp, m, d.xi, n,
                                             &beta, d.w, m));
 
-                qr_factorization(cusolverH, cusolverParams, d.w, d.zeta, m, n, d.w);
+                thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.zeta, m, n, d.w);
 
                 // temp = s * zeta'
                 alpha = 1;
@@ -537,6 +537,10 @@ namespace dr_bcg
         if (info < 0)
         {
             throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
+        }
+        if (info > 0)
+        {
+            throw std::runtime_error("cusolverDnXpotrf (Cholesky factorization) failed. The smallest leading minor of d_H which is not positive definite is " + std::to_string(info));
         }
 
         constexpr int block_n = 16;
