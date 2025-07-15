@@ -231,6 +231,7 @@ namespace dr_bcg
         *iterations = 0;
         while (*iterations < max_iterations)
         {
+            std::cout << "Iteration " << *iterations << std::endl;
             nvtx3::scoped_range loop{"iteration_" + std::to_string(*iterations)};
 
             (*iterations)++;
@@ -528,6 +529,9 @@ namespace dr_bcg
         }
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), d_lwork_Xpotrf));
 
+        std::cout << "d_H:" << std::endl;
+        print_device_matrix(d_H, n, n);
+
         CUSOLVER_CHECK(cusolverDnXpotrf(
             cusolverH, params, CUBLAS_FILL_MODE_UPPER, n,
             CUDA_R_32F, d_H, n,
@@ -541,6 +545,14 @@ namespace dr_bcg
         if (info > 0)
         {
             throw std::runtime_error("cusolverDnXpotrf (Cholesky factorization) failed. The smallest leading minor of d_H which is not positive definite is " + std::to_string(info));
+        }
+
+        try {
+            check_nan(d_H, n * n, "thin_qr: cusolverDnXpotrf");
+        } catch (std::runtime_error &e) {
+            std::cout << "ERROR d_H:" << std::endl;
+            print_device_matrix(d_H, n, n);
+            throw e;
         }
 
         constexpr int block_n = 16;
