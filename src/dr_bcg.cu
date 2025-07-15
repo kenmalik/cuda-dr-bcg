@@ -496,9 +496,15 @@ namespace dr_bcg
         // H = M^T * M
         float *d_H = nullptr;
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_H), sizeof(float) * n * n));
+        
+        std::vector<float> I(n * n);
+        for (int i = 0; i < n; i++) {
+            I.at(i * n + i) = 1;
+        }
+        CUDA_CHECK(cudaMemcpy(d_H, I.data(), sizeof(float) * I.size(), cudaMemcpyHostToDevice));
 
         constexpr float alpha = 1;
-        constexpr float beta = 0;
+        constexpr float beta = 1e-6;
         CUBLAS_CHECK(cublasSgemm_v2(
             cublasH, CUBLAS_OP_T, CUBLAS_OP_N, n, n, m,
             &alpha, A, m, A, m,
