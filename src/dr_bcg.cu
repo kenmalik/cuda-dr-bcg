@@ -115,7 +115,7 @@ namespace dr_bcg
     void copy_upper_triangular(float *dst, float *src, const int m, const int n)
     {
         constexpr int block_n = 16;
-        dim3 block_dim(block_n, block_n);
+        constexpr dim3 block_dim(block_n, block_n);
         dim3 grid_dim((n + block_n - 1) / block_n, (n + block_n - 1) / block_n);
         copy_upper_triangular_kernel<<<grid_dim, block_dim>>>(dst, src, m, n);
     }
