@@ -98,7 +98,7 @@ __global__ void symmetrize_matrix(float *A, const int n)
  * @param src Pointer to source device matrix (n x n)
  * @param n Matrix dimension
  */
-__global__ void copy_upper_triangular(float *dst, float *src, const int n)
+__global__ void copy_upper_triangular_kernel(float *dst, float *src, const int n)
 {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -109,9 +109,17 @@ __global__ void copy_upper_triangular(float *dst, float *src, const int n)
     }
 }
 
-
 namespace dr_bcg
 {
+    void copy_upper_triangular(float *dst, float *src, const int m, const int n)
+    {
+        for (int col = 0; col < n; col++)
+        {
+            CUDA_CHECK(cudaMemcpy(dst + col * n, src + col * m, sizeof(float) * (col + 1), cudaMemcpyDeviceToDevice));
+            std::cerr << "Copied col " << col << std::endl;
+        }
+    }
+
     /**
      * @brief Convenience wrapper for DR-BCG solver routine.
      *
@@ -450,15 +458,7 @@ namespace dr_bcg
 
         const int max_R_col = std::min(m, n);
 
-        constexpr int block_n = 16;
-        dim3 block_dim(block_n, block_n);
-        dim3 grid_dim((n + block_n - 1) / block_n, (n + block_n - 1) / block_n);
-        copy_upper_triangular<<<grid_dim, block_dim>>>(R, Q, n);
-
-        for (int col = 0; col < max_R_col; col++)
-        {
-            CUDA_CHECK(cudaMemcpy(R + col * n, Q + col * m, sizeof(float) * (col + 1), cudaMemcpyDeviceToDevice));
-        }
+        copy_upper_triangular(R, Q, m, n);
 
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
@@ -546,7 +546,7 @@ namespace dr_bcg
         constexpr int block_n = 16;
         dim3 block_dim(block_n, block_n);
         dim3 grid_dim((n + block_n - 1) / block_n, (n + block_n - 1) / block_n);
-        copy_upper_triangular<<<grid_dim, block_dim>>>(R, d_H, n);
+        copy_upper_triangular_kernel<<<grid_dim, block_dim>>>(R, d_H, n);
 
         // Q = M * R^-1
         size_t d_lwork_Xtrtri = 0;
