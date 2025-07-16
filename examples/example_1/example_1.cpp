@@ -50,7 +50,7 @@ int main(int argc, char *argv[])
     constexpr int n = 4;
 
     constexpr float tolerance = 0.1;
-    constexpr int max_iterations = 100;
+    constexpr int max_iterations = 1000;
 
     std::vector<double> matrix_d(m * m);
     read_matrix_bin(matrix_d.data(), filename, matrix_d.size());
