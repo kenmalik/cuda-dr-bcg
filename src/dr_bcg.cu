@@ -543,10 +543,7 @@ namespace dr_bcg
             throw std::runtime_error("cusolverDnXpotrf (Cholesky factorization) failed. The smallest leading minor of d_H which is not positive definite is " + std::to_string(info));
         }
 
-        constexpr int block_n = 16;
-        dim3 block_dim(block_n, block_n);
-        dim3 grid_dim((n + block_n - 1) / block_n, (n + block_n - 1) / block_n);
-        copy_upper_triangular_kernel<<<grid_dim, block_dim>>>(R, d_H, m, n);
+        copy_upper_triangular(R, d_H, n, n);
 
         // Q = M * R^-1
         size_t d_lwork_Xtrtri = 0;
