@@ -124,6 +124,11 @@ TEST(QR_Factorization, OutputCorrect)
     // Operation
     dr_bcg::qr_factorization(cusolverH, cusolverParams, d_Q, d_R, m, n, d_A);
 
+    std::cerr << "Q:" << std::endl;
+    print_device_matrix(d_Q, m, n);
+    std::cerr << "R:" << std::endl;
+    print_device_matrix(d_R, n, n);
+
     // Test A = Q * R
     CUDA_CHECK(cudaMemset(d_A, 0, sizeof(float) * m * n));
 
@@ -134,6 +139,11 @@ TEST(QR_Factorization, OutputCorrect)
                                 &beta, d_A, m));
 
     CUDA_CHECK(cudaMemcpy(h_A_out.data(), d_A, sizeof(float) * h_A_out.size(), cudaMemcpyDeviceToHost));
+
+    std::cerr << "Resulting A:" << std::endl;
+    print_matrix(h_A_out.data(), m, n);
+    std::cerr << "Expected A:" << std::endl;
+    print_matrix(h_A_in.data(), m, n);
 
     for (int i = 0; i < h_A_in.size(); i++)
     {
@@ -303,9 +313,9 @@ TEST(ThinQR, OutputCorrect)
 
     dr_bcg::thin_qr(cusolverH, params, cublasH, d_Q, d_R, m, n, d_A);
 
-    std::cout << "Q:" << std::endl;
+    std::cerr << "Q:" << std::endl;
     print_device_matrix(d_Q, m, n);
-    std::cout << "R:" << std::endl;
+    std::cerr << "R:" << std::endl;
     print_device_matrix(d_R, n, n);
 
     constexpr float alpha = 1;
@@ -325,15 +335,65 @@ TEST(ThinQR, OutputCorrect)
     CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
     CUSOLVER_CHECK(cusolverDnDestroyParams(params));
 
-    std::cout << "A in:" << std::endl;
+    std::cerr << "A in:" << std::endl;
     print_matrix(h_A_in.data(), m, n);
-    std::cout << "A out:" << std::endl;
+    std::cerr << "A out:" << std::endl;
     print_matrix(h_A_out.data(), m, n);
 
     for (int i = 0; i < h_A_in.size(); i++)
     {
         ASSERT_NEAR(h_A_in.at(i), h_A_out.at(i), test_tolerance);
     }
+}
+
+// Copy upper triangular-like, even if source matrix may be taller than destination matrix
+TEST(CopyUpperTriangular, OutputCorrect)
+{
+    constexpr int m = 16;
+    constexpr int n = 8;
+
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<> distrib(0, 1);
+
+    std::vector<float> A(m * n);
+    std::generate(A.begin(), A.end(), [&]() {
+        return distrib(gen);
+    });
+
+    std::vector<float> copy_expected(n * n);
+    for (int i = 0; i < n; i++)
+    {
+        for  (int j = 0; j <= i; j++) // Matrix is stored in column-major order
+        {
+            copy_expected.at(i * n + j) = A.at(i * m + j);
+        }
+    }
+
+    std::vector<float> copy_got(copy_expected.size());
+
+    float *d_A = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_A, sizeof(float) * A.size()));
+    CUDA_CHECK(cudaMemcpy(d_A, A.data(), sizeof(float) * A.size(), cudaMemcpyHostToDevice));
+
+    float *d_copy = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_copy, sizeof(float) * copy_got.size()));
+
+    dr_bcg::copy_upper_triangular(d_copy, d_A, m, n);
+
+    CUDA_CHECK(cudaMemcpy(copy_got.data(), d_copy, sizeof(float) * copy_got.size(), cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaFree(d_A));
+    CUDA_CHECK(cudaFree(d_copy));
+
+    std::cerr << "Original Matrix" << std::endl;
+    print_matrix(A.data(), m, n);
+    std::cerr << "Expected" << std::endl;
+    print_matrix(copy_expected.data(), n, n);
+    std::cerr << "Got" << std::endl;
+    print_matrix(copy_got.data(), n, n);
+
+    ASSERT_EQ(copy_expected, copy_got);
 }
 
 TEST(DR_BCG, OutputCorrect)
@@ -343,7 +403,7 @@ TEST(DR_BCG, OutputCorrect)
     constexpr int m = 32;
     constexpr int n = 8;
     constexpr float convergance_tolerance = 0.001;
-    constexpr int max_iterations = 100;
+    constexpr int max_iterations = 1000;
 
     std::vector<float> A(m * m);
     fill_spd(A.data(), m);

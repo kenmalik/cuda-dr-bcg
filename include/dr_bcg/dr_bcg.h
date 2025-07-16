@@ -5,6 +5,8 @@
 
 namespace dr_bcg
 {
+    void copy_upper_triangular(float *dst, float *src, const int m, const int n);
+
     std::tuple<std::vector<float>, int> dr_bcg(
         const std::vector<float> &A,
         const std::vector<float> &X,
