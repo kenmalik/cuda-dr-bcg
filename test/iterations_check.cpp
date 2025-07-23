@@ -46,7 +46,7 @@ int main(int argc, char *argv[])
 
     constexpr int n = 4;
     constexpr float tolerance = 0.1;
-    const int max_iterations = 2048;
+    const int max_iterations = m;
 
     std::vector<float> A = read_matrix_bin(filename, m * m);
     std::vector<float> X_initial(m * n, 0);
