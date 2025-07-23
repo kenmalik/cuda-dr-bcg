@@ -9,6 +9,7 @@ FetchContent_MakeAvailable(nvtx)
 add_library(dr_bcg
     "dr_bcg.cu"
     "helper.cu"
+    "device_buffer.cu"
 )
 target_include_directories(dr_bcg PUBLIC "${CMAKE_SOURCE_DIR}/include")
 

@@ -2,6 +2,8 @@
 
 #include <cublas_v2.h>
 #include <cusolverDn.h>
+#include "dr_bcg/helper.h"
+#include "dr_bcg/device_buffer.h"
 
 namespace dr_bcg
 {
@@ -28,6 +30,12 @@ namespace dr_bcg
         float tolerance,
         int max_iterations,
         int *iterations);
+
+    void get_sigma(cublasHandle_t cublasH, int n, DeviceBuffer &d);
+
+    void get_s(cublasHandle_t cublasH, int m, int n, DeviceBuffer &d);
+
+    void get_w_zeta(cublasHandle_t &cublasH, int m, int n, const float *A, DeviceBuffer &d, cusolverDnHandle_t &cusolverH, cusolverDnParams_t &cusolverParams);
 
     void residual(cublasHandle_t &cublasH, float *d_residual, const float *B, const int m, const float *d_A, const float *d_X);
 

@@ -9,71 +9,6 @@
 #include "dr_bcg/helper.h"
 
 /**
- * @brief Device pointers for reused device buffers.
- *
- * This struct manages device memory for all buffers used in the DR-BCG algorithm.
- * It handles allocation and deallocation of all required device arrays.
- */
-struct DeviceBuffer
-{
-    float *w = nullptr;        ///< Device pointer for matrix w (m x n)
-    float *sigma = nullptr;    ///< Device pointer for matrix sigma (n x n)
-    float *s = nullptr;        ///< Device pointer for matrix s (m x n)
-    float *xi = nullptr;       ///< Device pointer for matrix xi (n x n)
-    float *zeta = nullptr;     ///< Device pointer for matrix zeta (n x n)
-    float *temp = nullptr;     ///< Device pointer for temporary matrix (m x n)
-    float *residual = nullptr; ///< Device pointer for residual vector (m)
-
-    /**
-     * @brief Constructor. Allocates all device buffers.
-     * @param m m dimension
-     * @param n n dimension
-     */
-    DeviceBuffer(int m, int n)
-    {
-        allocate(m, n);
-    }
-
-    /**
-     * @brief Destructor. Frees all allocated device memory.
-     */
-    ~DeviceBuffer()
-    {
-        deallocate();
-    }
-
-    /**
-     * @brief Allocates device memory for all buffers.
-     * @param m m dimension
-     * @param n n dimension
-     */
-    void allocate(int m, int n)
-    {
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&w), sizeof(float) * m * n));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&sigma), sizeof(float) * n * n));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&s), sizeof(float) * m * n));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&xi), sizeof(float) * n * n));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&zeta), sizeof(float) * n * n));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&temp), sizeof(float) * m * n));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&residual), sizeof(float) * m));
-    }
-
-    /**
-     * @brief Deallocates all device memory.
-     */
-    void deallocate()
-    {
-        CUDA_CHECK(cudaFree(w));
-        CUDA_CHECK(cudaFree(sigma));
-        CUDA_CHECK(cudaFree(s));
-        CUDA_CHECK(cudaFree(xi));
-        CUDA_CHECK(cudaFree(zeta));
-        CUDA_CHECK(cudaFree(temp));
-        CUDA_CHECK(cudaFree(residual));
-    }
-};
-
-/**
  * @brief CUDA kernel to symmetrize a square matrix in-place.
  *
  * Copies the lower triangle to the upper triangle to ensure symmetry.
@@ -266,43 +201,60 @@ namespace dr_bcg
             {
                 nvtx3::scoped_range new_s_and_sigma{"get_new_s_and_sigma"};
 
-                // temp = A * s
-                float alpha = 1;
-                float beta = 0;
-                CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, m,
-                                            &alpha, A, m, d.s, m,
-                                            &beta, d.temp, m));
+                get_w_zeta(cublasH, m, n, A, d, cusolverH, cusolverParams);
 
-                // w - temp * xi
-                alpha = -1;
-                beta = 1;
-                CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, n,
-                                            &alpha, d.temp, m, d.xi, n,
-                                            &beta, d.w, m));
+                get_s(cublasH, m, n, d);
 
-                thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.zeta, m, n, d.w);
-
-                // temp = s * zeta'
-                alpha = 1;
-                CUBLAS_CHECK(cublasStrmm_v2(cublasH, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER,
-                                            CUBLAS_OP_T, CUBLAS_DIAG_NON_UNIT, m, n,
-                                            &alpha, d.zeta, n, d.s, m, d.temp, m));
-
-                // s = w + temp
-                beta = 1;
-                CUBLAS_CHECK(cublasSgeam(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n,
-                                         &alpha, d.w, m, &beta, d.temp, m, d.s, m));
-
-                // sigma = zeta * sigma
-                beta = 0;
-                CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n,
-                                            &alpha, d.zeta, n, d.sigma, n,
-                                            &beta, d.temp, n));
-                CUDA_CHECK(cudaMemcpy(d.sigma, d.temp, sizeof(float) * n * n, cudaMemcpyDeviceToDevice));
+                get_sigma(cublasH, n, d);
             }
         }
 
         return CUSOLVER_STATUS_SUCCESS;
+    }
+
+    void get_sigma(cublasHandle_t cublasH, int n, DeviceBuffer &d)
+    {
+        // sigma = zeta * sigma
+        constexpr float sgemm_alpha = 1;
+        constexpr float sgemm_beta = 0;
+        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n,
+                                    &sgemm_alpha, d.zeta, n, d.sigma, n,
+                                    &sgemm_beta, d.temp, n));
+        CUDA_CHECK(cudaMemcpy(d.sigma, d.temp, sizeof(float) * n * n, cudaMemcpyDeviceToDevice));
+    }
+
+    void get_s(cublasHandle_t cublasH, int m, int n, DeviceBuffer &d)
+    {
+        // temp = s * zeta'
+        constexpr float strmm_alpha = 1;
+        CUBLAS_CHECK(cublasStrmm_v2(cublasH, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER,
+                                    CUBLAS_OP_T, CUBLAS_DIAG_NON_UNIT, m, n,
+                                    &strmm_alpha, d.zeta, n, d.s, m, d.temp, m));
+
+        // s = w + temp
+        constexpr float sgeam_alpha = 1;
+        constexpr float sgeam_beta = 1;
+        CUBLAS_CHECK(cublasSgeam(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n,
+                                 &sgeam_alpha, d.w, m, &sgeam_beta, d.temp, m, d.s, m));
+    }
+
+    void get_w_zeta(cublasHandle_t &cublasH, int m, int n, const float *A, DeviceBuffer &d, cusolverDnHandle_t &cusolverH, cusolverDnParams_t &cusolverParams)
+    {
+        // temp = A * s
+        constexpr float alpha_1 = 1;
+        constexpr float beta_1 = 0;
+        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, m,
+                                    &alpha_1, A, m, d.s, m,
+                                    &beta_1, d.temp, m));
+
+        // w - temp * xi
+        constexpr float alpha_2 = -1;
+        constexpr float beta_2 = 1;
+        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, n,
+                                    &alpha_2, d.temp, m, d.xi, n,
+                                    &beta_2, d.w, m));
+
+        thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.zeta, m, n, d.w);
     }
 
     /**
