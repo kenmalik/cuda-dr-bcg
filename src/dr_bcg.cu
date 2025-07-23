@@ -179,9 +179,7 @@ namespace dr_bcg
             (*iterations)++;
 
             // xi = (s' * A * s)^-1
-            quadratic_form(cublasH, m, n, d.s, A, d.temp, d.xi);
-
-            invert_square_matrix(cusolverH, cusolverParams, d.xi, n);
+            get_xi(cublasH, m, n, d, A, cusolverH, cusolverParams);
 
             // X = X + s * xi * sigma
             next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, X);
@@ -210,6 +208,12 @@ namespace dr_bcg
         }
 
         return CUSOLVER_STATUS_SUCCESS;
+    }
+
+    void get_xi(cublasHandle_t &cublasH, int m, int n, DeviceBuffer &d, const float *A, cusolverDnHandle_t &cusolverH, cusolverDnParams_t &cusolverParams)
+    {
+        quadratic_form(cublasH, m, n, d.s, A, d.temp, d.xi);
+        invert_square_matrix(cusolverH, cusolverParams, d.xi, n);
     }
 
     void get_sigma(cublasHandle_t cublasH, int n, DeviceBuffer &d)

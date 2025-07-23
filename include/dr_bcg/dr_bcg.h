@@ -31,6 +31,8 @@ namespace dr_bcg
         int max_iterations,
         int *iterations);
 
+    void get_xi(cublasHandle_t &cublasH, int m, int n, DeviceBuffer &d, const float *A, cusolverDnHandle_t &cusolverH, cusolverDnParams_t &cusolverParams);
+
     void get_sigma(cublasHandle_t cublasH, int n, DeviceBuffer &d);
 
     void get_s(cublasHandle_t cublasH, int m, int n, DeviceBuffer &d);
