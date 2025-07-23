@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --gpus-per-node=1
 #SBATCH --no-requeue
-#SBATCH -t 00:30:00
+#SBATCH -t 5:00:00
 
 source scripts/run_mat/.venv/bin/activate
-srun python scripts/run_mat/test_runner.py -o ${OUT_DIR}/${SLURM_JOB_NAME}.${SLURM_JOB_ID}.${SLURMD_NODENAME}.csv ${SUITESPARSE_DIR} build/test/iterations_check {file} {m}
+srun python scripts/run_mat/test_runner.py ${SUITESPARSE_DIR} build/test/iterations_check {file} {m}

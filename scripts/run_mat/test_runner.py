@@ -1,10 +1,9 @@
 from run_mat import run_mat
 from pathlib import Path
 from subprocess import CalledProcessError
-from typing import NamedTuple
+from typing import NamedTuple, Generator
 from enum import Enum
 import sys
-import csv
 import argparse
 
 
@@ -26,6 +25,7 @@ class Status(Enum):
     PASSED = "PASSED"
     FAILED = "FAILED"
     NOT_RAN = "NOT_RAN"
+
     def __str__(self):
         return f"{self.name}"
 
@@ -42,13 +42,12 @@ def run_files(
     command_args_template: list[str],
     limit: int | None = None,
     enumerate_files: bool = False,
-) -> list[Row]:
+) -> Generator[Row, None, None]:
     mat_files = list(directory_path.glob("*.mat"))
 
     if limit is None:
         limit = len(mat_files)
 
-    results = []
     for i, file_name in enumerate(mat_files):
         if i == limit:
             break
@@ -80,11 +79,7 @@ def run_files(
             status = Status.FAILED
             print(e.stderr, file=sys.stderr)
 
-        row = Row(file, status, return_code, iterations)
-        print(f"Result: {row}", file=sys.stderr)
-        results.append(row)
-
-    return results
+        yield Row(file, status, return_code, iterations)
 
 
 def main():
@@ -95,20 +90,22 @@ def main():
         print(f"{args.directory} is not a directory", file=sys.stderr)
         return
 
-    res = run_files(
+    file = sys.stdout
+
+    if args.output:
+        file = open(args.output, "w")
+
+    print("file,status,return_code,iterations", file=file)
+    for row in run_files(
         directory_path,
         args.command_args,
         limit=args.limit,
         enumerate_files=args.enumerate,
-    )
+    ):
+        print(",".join((str(x) for x in row)), file=file)
 
     if args.output:
-        out_file = args.output
-        with open(out_file, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(Row._fields)
-            writer.writerows(res)
-        print(f"Outputted to {out_file}", file=sys.stderr)
+        file.close()
 
 
 if __name__ == "__main__":
