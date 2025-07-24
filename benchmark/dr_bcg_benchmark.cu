@@ -172,7 +172,7 @@ BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_xi)(benchmark::State &state)
 
     for (auto _ : state)
     {
-        TIME_CUDA(dr_bcg::get_xi(cublasH, m, n, d, d_A, cusolverH, cusolverParams));
+        TIME_CUDA(dr_bcg::get_xi(cusolverH, cusolverParams, cublasH, m, n, d, d_A));
     }
 
     CUDA_CHECK(cudaFree(d_A));
