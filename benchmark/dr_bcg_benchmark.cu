@@ -184,6 +184,38 @@ BENCHMARK_REGISTER_F(DR_BCG_Benchmark, get_xi)
     ->RangeMultiplier(2)
     ->Ranges({{2048, 8192}, {4, 16}});
 
+BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_next_X)(benchmark::State &state)
+{
+    const int m = state.range(0);
+    const int n = state.range(1);
+    auto [d_A, d_X, d_B] = initialize_inputs(m, n);
+
+    DeviceBuffer d = filled_device_buffer(cusolverH, cusolverParams, cublasH, m, n, d_A, d_X, d_B);
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    dr_bcg::get_xi(cusolverH, cusolverParams, cublasH, m, n, d, d_A);
+    
+    // Keep copy of X for consistent benchmark state
+    std::vector<float> h_X(m * n);
+    CUDA_CHECK(cudaMemcpy(h_X.data(), d_X, sizeof(float) * h_X.size(), cudaMemcpyDeviceToHost));
+
+    for (auto _ : state)
+    {
+        CUDA_CHECK(cudaMemcpy(d_X, h_X.data(), sizeof(float) * h_X.size(), cudaMemcpyHostToDevice));
+        TIME_CUDA(dr_bcg::next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, d_X));
+    }
+
+    CUDA_CHECK(cudaFree(d_A));
+    CUDA_CHECK(cudaFree(d_X));
+    CUDA_CHECK(cudaFree(d_B));
+}
+BENCHMARK_REGISTER_F(DR_BCG_Benchmark, get_next_X)
+    ->MinWarmUpTime(1.0)
+    ->UseManualTime()
+    ->Unit(benchmark::kMillisecond)
+    ->RangeMultiplier(2)
+    ->Ranges({{2048, 8192}, {4, 16}});
+
 BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_sigma)(benchmark::State &state)
 {
     const int m = state.range(0);
