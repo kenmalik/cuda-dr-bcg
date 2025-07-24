@@ -229,7 +229,7 @@ namespace dr_bcg
         CUDA_CHECK(cudaMemcpy(d.sigma, d.temp, sizeof(float) * n * n, cudaMemcpyDeviceToDevice));
     }
 
-    void get_s(cublasHandle_t cublasH, int m, int n, DeviceBuffer &d)
+    void get_s(cublasHandle_t cublasH, const int m, const int n, DeviceBuffer &d)
     {
         // temp = s * zeta'
         constexpr float strmm_alpha = 1;

@@ -37,7 +37,7 @@ namespace dr_bcg
 
     void get_sigma(cublasHandle_t cublasH, int n, DeviceBuffer &d);
 
-    void get_s(cublasHandle_t cublasH, int m, int n, DeviceBuffer &d);
+    void get_s(cublasHandle_t cublasH, const int m, const int n, DeviceBuffer &d);
 
     void get_w_zeta(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &cusolverParams, cublasHandle_t &cublasH,
                     const int m, const int n, DeviceBuffer &d, const float *d_A);
