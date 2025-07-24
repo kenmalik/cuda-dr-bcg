@@ -202,7 +202,7 @@ BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_next_X)(benchmark::State &state)
     for (auto _ : state)
     {
         CUDA_CHECK(cudaMemcpy(d_X, h_X.data(), sizeof(float) * h_X.size(), cudaMemcpyHostToDevice));
-        TIME_CUDA(dr_bcg::next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, d_X));
+        TIME_CUDA(dr_bcg::get_next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, d_X));
     }
 
     CUDA_CHECK(cudaFree(d_A));
@@ -226,7 +226,7 @@ BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_sigma)(benchmark::State &state)
     CUDA_CHECK(cudaDeviceSynchronize());
 
     dr_bcg::get_xi(cusolverH, cusolverParams, cublasH, m, n, d, d_A);
-    dr_bcg::next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, d_X);
+    dr_bcg::get_next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, d_X);
     dr_bcg::get_w_zeta(cublasH, m, n, d_A, d, cusolverH, cusolverParams);
     dr_bcg::get_s(cublasH, m, n, d);
 

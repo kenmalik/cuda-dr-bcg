@@ -182,7 +182,7 @@ namespace dr_bcg
             get_xi(cusolverH, cusolverParams, cublasH, m, n, d, A);
 
             // X = X + s * xi * sigma
-            next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, X);
+            get_next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, X);
 
             // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
             float relative_residual_norm;
@@ -297,7 +297,7 @@ namespace dr_bcg
      * @param d_sigma Device pointer to sigma (n x n)
      * @param d_X Device pointer to X (m x n). Result is overwritten to pointed location.
      */
-    void next_X(cublasHandle_t &cublasH, const int m, const int n, const float *d_s, const float *d_xi, float *d_temp, const float *d_sigma, float *d_X)
+    void get_next_X(cublasHandle_t &cublasH, const int m, const int n, const float *d_s, const float *d_xi, float *d_temp, const float *d_sigma, float *d_X)
     {
         constexpr float alpha = 1;
         constexpr float beta = 1;
