@@ -216,6 +216,42 @@ BENCHMARK_REGISTER_F(DR_BCG_Benchmark, get_next_X)
     ->RangeMultiplier(2)
     ->Ranges({{2048, 8192}, {4, 16}});
 
+BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_w_zeta)(benchmark::State &state)
+{
+    const int m = state.range(0);
+    const int n = state.range(1);
+    auto [d_A, d_X, d_B] = initialize_inputs(m, n);
+
+    DeviceBuffer d = filled_device_buffer(cusolverH, cusolverParams, cublasH, m, n, d_A, d_X, d_B);
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    dr_bcg::get_xi(cusolverH, cusolverParams, cublasH, m, n, d, d_A);
+    dr_bcg::get_next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, d_X);
+
+    // Keep copies of w and zeta for consistent benchmark state
+    std::vector<float> h_w(m * n);
+    std::vector<float> h_zeta(n * n);
+    CUDA_CHECK(cudaMemcpy(h_w.data(), d.w, sizeof(float) * h_w.size(), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_zeta.data(), d.zeta, sizeof(float) * h_zeta.size(), cudaMemcpyDeviceToHost));
+
+    for (auto _ : state)
+    {
+        CUDA_CHECK(cudaMemcpy(d.w, h_w.data(), sizeof(float) * h_w.size(), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d.zeta, h_zeta.data(), sizeof(float) * h_zeta.size(), cudaMemcpyHostToDevice));
+        TIME_CUDA(dr_bcg::get_w_zeta(cusolverH, cusolverParams, cublasH, m, n, d, d_A));
+    }
+
+    CUDA_CHECK(cudaFree(d_A));
+    CUDA_CHECK(cudaFree(d_X));
+    CUDA_CHECK(cudaFree(d_B));
+}
+BENCHMARK_REGISTER_F(DR_BCG_Benchmark, get_w_zeta)
+    ->MinWarmUpTime(1.0)
+    ->UseManualTime()
+    ->Unit(benchmark::kMillisecond)
+    ->RangeMultiplier(2)
+    ->Ranges({{2048, 8192}, {4, 16}});
+
 BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_sigma)(benchmark::State &state)
 {
     const int m = state.range(0);
