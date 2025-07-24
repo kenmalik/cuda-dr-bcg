@@ -194,8 +194,20 @@ BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_sigma)(benchmark::State &state)
     CUDA_CHECK(cudaDeviceSynchronize());
 
     dr_bcg::get_xi(cusolverH, cusolverParams, cublasH, m, n, d, d_A);
+    dr_bcg::next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, d_X);
+    dr_bcg::get_w_zeta(cublasH, m, n, d_A, d, cusolverH, cusolverParams);
+    dr_bcg::get_s(cublasH, m, n, d);
+
+    // Keep copies of zeta and sigma for consistent benchmark state
+    std::vector<float> h_zeta(n * n);
+    std::vector<float> h_sigma(n * n);
+    CUDA_CHECK(cudaMemcpy(h_zeta.data(), d.zeta, sizeof(float) * h_zeta.size(), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_sigma.data(), d.sigma, sizeof(float) * h_sigma.size(), cudaMemcpyDeviceToHost));
+    
     for (auto _ : state)
     {
+        CUDA_CHECK(cudaMemcpy(d.zeta, h_zeta.data(), sizeof(float) * h_zeta.size(), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d.sigma, h_sigma.data(), sizeof(float) * h_sigma.size(), cudaMemcpyHostToDevice));
         TIME_CUDA(dr_bcg::get_sigma(cublasH, n, d));
     }
 
