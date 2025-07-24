@@ -199,7 +199,7 @@ namespace dr_bcg
             {
                 nvtx3::scoped_range new_s_and_sigma{"get_new_s_and_sigma"};
 
-                get_w_zeta(cublasH, m, n, A, d, cusolverH, cusolverParams);
+                get_w_zeta(cusolverH, cusolverParams, cublasH, m, n, d, A);
 
                 get_s(cublasH, m, n, d);
 
@@ -244,13 +244,15 @@ namespace dr_bcg
                                  &sgeam_alpha, d.w, m, &sgeam_beta, d.temp, m, d.s, m));
     }
 
-    void get_w_zeta(cublasHandle_t &cublasH, int m, int n, const float *A, DeviceBuffer &d, cusolverDnHandle_t &cusolverH, cusolverDnParams_t &cusolverParams)
+    void get_w_zeta(
+        cusolverDnHandle_t &cusolverH, cusolverDnParams_t &cusolverParams, cublasHandle_t &cublasH,
+        const int m, const int n, DeviceBuffer &d, const float *d_A)
     {
         // temp = A * s
         constexpr float alpha_1 = 1;
         constexpr float beta_1 = 0;
         CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, m,
-                                    &alpha_1, A, m, d.s, m,
+                                    &alpha_1, d_A, m, d.s, m,
                                     &beta_1, d.temp, m));
 
         // w - temp * xi

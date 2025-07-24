@@ -227,7 +227,7 @@ BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_sigma)(benchmark::State &state)
 
     dr_bcg::get_xi(cusolverH, cusolverParams, cublasH, m, n, d, d_A);
     dr_bcg::get_next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, d_X);
-    dr_bcg::get_w_zeta(cublasH, m, n, d_A, d, cusolverH, cusolverParams);
+    dr_bcg::get_w_zeta(cusolverH, cusolverParams, cublasH, m, n, d, d_A);
     dr_bcg::get_s(cublasH, m, n, d);
 
     // Keep copies of zeta and sigma for consistent benchmark state
