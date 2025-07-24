@@ -11,6 +11,23 @@
 #include "dr_bcg/dr_bcg.h"
 #include "dr_bcg/helper.h"
 
+#define TIME_CUDA(function)                     \
+    do                                          \
+    {                                           \
+        cudaEvent_t start, stop;                \
+        cudaEventCreate(&start);                \
+        cudaEventCreate(&stop);                 \
+                                                \
+        cudaEventRecord(start);                 \
+        function;                               \
+        cudaEventRecord(stop);                  \
+        cudaEventSynchronize(stop);             \
+                                                \
+        float ms = 0;                           \
+        cudaEventElapsedTime(&ms, start, stop); \
+        state.SetIterationTime(ms / 1000.0);    \
+    } while (0);
+
 static bool context_added = false;
 
 class CUDA_Benchmark : public benchmark::Fixture
@@ -86,18 +103,7 @@ BENCHMARK_DEFINE_F(CUDA_Benchmark, DR_BCG)(benchmark::State &state)
 
     for (auto _ : state)
     {
-        cudaEvent_t start, stop;
-        cudaEventCreate(&start);
-        cudaEventCreate(&stop);
-
-        cudaEventRecord(start);
-        dr_bcg::dr_bcg(cusolverH, cusolverParams, cublasH, m, n, d_A, d_X, d_B, tolerance, max_iterations, &iterations);
-        cudaEventRecord(stop);
-        cudaEventSynchronize(stop);
-
-        float ms = 0;
-        cudaEventElapsedTime(&ms, start, stop);
-        state.SetIterationTime(ms / 1000.0);
+        TIME_CUDA(dr_bcg::dr_bcg(cusolverH, cusolverParams, cublasH, m, n, d_A, d_X, d_B, tolerance, max_iterations, &iterations));
     }
 
     CUDA_CHECK(cudaFree(d_A));
@@ -144,18 +150,7 @@ BENCHMARK_DEFINE_F(QR_Benchmark, qr_factorization)(benchmark::State &state)
 
     for (auto _ : state)
     {
-        cudaEvent_t start, stop;
-        cudaEventCreate(&start);
-        cudaEventCreate(&stop);
-
-        cudaEventRecord(start);
-        dr_bcg::qr_factorization(cusolverH, cusolverParams, d_Q, d_R, m, n, d_A);
-        cudaEventRecord(stop);
-        cudaEventSynchronize(stop);
-
-        float ms = 0;
-        cudaEventElapsedTime(&ms, start, stop);
-        state.SetIterationTime(ms / 1000.0);
+        TIME_CUDA(dr_bcg::qr_factorization(cusolverH, cusolverParams, d_Q, d_R, m, n, d_A));
     }
 }
 BENCHMARK_REGISTER_F(QR_Benchmark, qr_factorization)
@@ -193,18 +188,7 @@ BENCHMARK_DEFINE_F(QR_Benchmark, thin_qr)(benchmark::State &state)
 
     for (auto _ : state)
     {
-        cudaEvent_t start, stop;
-        cudaEventCreate(&start);
-        cudaEventCreate(&stop);
-
-        cudaEventRecord(start);
-        dr_bcg::thin_qr(cusolverH, cusolverParams, cublasH, d_Q, d_R, m, n, d_A);
-        cudaEventRecord(stop);
-        cudaEventSynchronize(stop);
-
-        float ms = 0;
-        cudaEventElapsedTime(&ms, start, stop);
-        state.SetIterationTime(ms / 1000.0);
+        TIME_CUDA(dr_bcg::thin_qr(cusolverH, cusolverParams, cublasH, d_Q, d_R, m, n, d_A));
     }
 }
 BENCHMARK_REGISTER_F(QR_Benchmark, thin_qr)
