@@ -161,7 +161,7 @@ namespace dr_bcg
         // R = B - AX
         get_R(cublasH, d_R, m, n, A, X, B);
 
-        thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.sigma, m, n, d_R);
+        qr_factorization(cusolverH, cusolverParams, d.w, d.sigma, m, n, d_R);
 
         CUDA_CHECK(cudaFree(d_R)); // Never used later
 
@@ -260,7 +260,7 @@ namespace dr_bcg
                                     &alpha_2, d.temp, m, d.xi, n,
                                     &beta_2, d.w, m));
 
-        thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.zeta, m, n, d.w);
+        qr_factorization(cusolverH, cusolverParams, d.w, d.zeta, m, n, d.w);
     }
 
     /**
