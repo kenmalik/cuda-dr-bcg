@@ -30,9 +30,15 @@
         state.SetIterationTime(ms / 1000.0);    \
     } while (0);
 
-constexpr std::pair<int64_t, int64_t> BLOCK_SIZE_RANGES = {4, 16};
-
 static bool context_added = false;
+
+static const std::vector<int64_t> INPUT_DIMENSION_RANGE = benchmark::CreateRange(2048, 8192, 2);
+static const std::vector<int64_t> BLOCK_SIZE_RANGE = []()
+{
+    auto list = benchmark::CreateDenseRange(2, 16, 2);
+    list.insert(list.begin(), 1);
+    return list;
+}();
 
 class CUDA_Benchmark : public benchmark::Fixture
 {
@@ -159,8 +165,8 @@ BENCHMARK_REGISTER_F(DR_BCG_Benchmark, DR_BCG)
     ->MinWarmUpTime(1.0)
     ->UseManualTime()
     ->Unit(benchmark::kMillisecond)
-    ->RangeMultiplier(2)
-    ->Ranges({{2048, 8192}, BLOCK_SIZE_RANGES});
+    ->ArgsProduct({INPUT_DIMENSION_RANGE,
+                   BLOCK_SIZE_RANGE});
 
 BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_xi)(benchmark::State &state)
 {
@@ -185,8 +191,8 @@ BENCHMARK_REGISTER_F(DR_BCG_Benchmark, get_xi)
     ->MinWarmUpTime(1.0)
     ->UseManualTime()
     ->Unit(benchmark::kMillisecond)
-    ->RangeMultiplier(2)
-    ->Ranges({{2048, 8192}, BLOCK_SIZE_RANGES});
+    ->ArgsProduct({INPUT_DIMENSION_RANGE,
+                   BLOCK_SIZE_RANGE});
 
 BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_next_X)(benchmark::State &state)
 {
@@ -218,8 +224,8 @@ BENCHMARK_REGISTER_F(DR_BCG_Benchmark, get_next_X)
     ->MinWarmUpTime(1.0)
     ->UseManualTime()
     ->Unit(benchmark::kMillisecond)
-    ->RangeMultiplier(2)
-    ->Ranges({{2048, 8192}, BLOCK_SIZE_RANGES});
+    ->ArgsProduct({INPUT_DIMENSION_RANGE,
+                   BLOCK_SIZE_RANGE});
 
 BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_w_zeta)(benchmark::State &state)
 {
@@ -255,8 +261,8 @@ BENCHMARK_REGISTER_F(DR_BCG_Benchmark, get_w_zeta)
     ->MinWarmUpTime(1.0)
     ->UseManualTime()
     ->Unit(benchmark::kMillisecond)
-    ->RangeMultiplier(2)
-    ->Ranges({{2048, 8192}, BLOCK_SIZE_RANGES});
+    ->ArgsProduct({INPUT_DIMENSION_RANGE,
+                   BLOCK_SIZE_RANGE});
 
 BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_s)(benchmark::State &state)
 {
@@ -290,8 +296,8 @@ BENCHMARK_REGISTER_F(DR_BCG_Benchmark, get_s)
     ->MinWarmUpTime(1.0)
     ->UseManualTime()
     ->Unit(benchmark::kMillisecond)
-    ->RangeMultiplier(2)
-    ->Ranges({{2048, 8192}, BLOCK_SIZE_RANGES});
+    ->ArgsProduct({INPUT_DIMENSION_RANGE,
+                   BLOCK_SIZE_RANGE});
 
 BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_sigma)(benchmark::State &state)
 {
@@ -329,8 +335,8 @@ BENCHMARK_REGISTER_F(DR_BCG_Benchmark, get_sigma)
     ->MinWarmUpTime(1.0)
     ->UseManualTime()
     ->Unit(benchmark::kMillisecond)
-    ->RangeMultiplier(2)
-    ->Ranges({{2048, 8192}, BLOCK_SIZE_RANGES});
+    ->ArgsProduct({INPUT_DIMENSION_RANGE,
+                   BLOCK_SIZE_RANGE});
 
 BENCHMARK_DEFINE_F(QR_Benchmark, qr_factorization)(benchmark::State &state)
 {
@@ -365,8 +371,8 @@ BENCHMARK_REGISTER_F(QR_Benchmark, qr_factorization)
     ->MinWarmUpTime(1.0)
     ->UseManualTime()
     ->Unit(benchmark::kMillisecond)
-    ->RangeMultiplier(2)
-    ->Ranges({{2048, 8192}, BLOCK_SIZE_RANGES});
+    ->ArgsProduct({INPUT_DIMENSION_RANGE,
+                   BLOCK_SIZE_RANGE});
 
 BENCHMARK_DEFINE_F(QR_Benchmark, thin_qr)(benchmark::State &state)
 {
@@ -403,5 +409,5 @@ BENCHMARK_REGISTER_F(QR_Benchmark, thin_qr)
     ->MinWarmUpTime(1.0)
     ->UseManualTime()
     ->Unit(benchmark::kMillisecond)
-    ->RangeMultiplier(2)
-    ->Ranges({{2048, 8192}, BLOCK_SIZE_RANGES});
+    ->ArgsProduct({INPUT_DIMENSION_RANGE,
+                   BLOCK_SIZE_RANGE});
