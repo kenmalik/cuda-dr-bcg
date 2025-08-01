@@ -248,6 +248,8 @@ namespace dr_bcg
         cusolverDnHandle_t &cusolverH, cusolverDnParams_t &cusolverParams, cublasHandle_t &cublasH,
         const int m, const int n, DeviceBuffer &d, const float *d_A)
     {
+        NVTX3_FUNC_RANGE();
+
         // temp = A * s
         constexpr float alpha_1 = 1;
         constexpr float beta_1 = 0;

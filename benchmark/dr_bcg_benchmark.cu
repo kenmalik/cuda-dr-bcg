@@ -3,6 +3,7 @@
 #include <cublas_v2.h>
 #include <cusolverDn.h>
 #include <cuda_runtime.h>
+#include <nvtx3/nvtx3.hpp>
 
 #include <benchmark/benchmark.h>
 
@@ -28,6 +29,8 @@
         cudaEventElapsedTime(&ms, start, stop); \
         state.SetIterationTime(ms / 1000.0);    \
     } while (0);
+
+constexpr std::pair<int64_t, int64_t> BLOCK_SIZE_RANGES = {4, 16};
 
 static bool context_added = false;
 
@@ -157,13 +160,14 @@ BENCHMARK_REGISTER_F(DR_BCG_Benchmark, DR_BCG)
     ->UseManualTime()
     ->Unit(benchmark::kMillisecond)
     ->RangeMultiplier(2)
-    ->Ranges({{2048, 8192}, {4, 16}});
+    ->Ranges({{2048, 8192}, BLOCK_SIZE_RANGES});
 
 BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_xi)(benchmark::State &state)
 {
     const int m = state.range(0);
     const int n = state.range(1);
     auto [d_A, d_X, d_B] = initialize_inputs(m, n);
+    nvtx3::mark("get_xi (" + std::to_string(m) + ", " + std::to_string(n) + ")");
 
     DeviceBuffer d = filled_device_buffer(cusolverH, cusolverParams, cublasH, m, n, d_A, d_X, d_B);
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -182,19 +186,20 @@ BENCHMARK_REGISTER_F(DR_BCG_Benchmark, get_xi)
     ->UseManualTime()
     ->Unit(benchmark::kMillisecond)
     ->RangeMultiplier(2)
-    ->Ranges({{2048, 8192}, {4, 16}});
+    ->Ranges({{2048, 8192}, BLOCK_SIZE_RANGES});
 
 BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_next_X)(benchmark::State &state)
 {
     const int m = state.range(0);
     const int n = state.range(1);
     auto [d_A, d_X, d_B] = initialize_inputs(m, n);
+    nvtx3::mark("get_next_X (" + std::to_string(m) + ", " + std::to_string(n) + ")");
 
     DeviceBuffer d = filled_device_buffer(cusolverH, cusolverParams, cublasH, m, n, d_A, d_X, d_B);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     dr_bcg::get_xi(cusolverH, cusolverParams, cublasH, m, n, d, d_A);
-    
+
     // Keep copy of X for consistent benchmark state
     std::vector<float> h_X(m * n);
     CUDA_CHECK(cudaMemcpy(h_X.data(), d_X, sizeof(float) * h_X.size(), cudaMemcpyDeviceToHost));
@@ -214,13 +219,14 @@ BENCHMARK_REGISTER_F(DR_BCG_Benchmark, get_next_X)
     ->UseManualTime()
     ->Unit(benchmark::kMillisecond)
     ->RangeMultiplier(2)
-    ->Ranges({{2048, 8192}, {4, 16}});
+    ->Ranges({{2048, 8192}, BLOCK_SIZE_RANGES});
 
 BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_w_zeta)(benchmark::State &state)
 {
     const int m = state.range(0);
     const int n = state.range(1);
     auto [d_A, d_X, d_B] = initialize_inputs(m, n);
+    nvtx3::mark("get_w_zeta (" + std::to_string(m) + ", " + std::to_string(n) + ")");
 
     DeviceBuffer d = filled_device_buffer(cusolverH, cusolverParams, cublasH, m, n, d_A, d_X, d_B);
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -250,13 +256,14 @@ BENCHMARK_REGISTER_F(DR_BCG_Benchmark, get_w_zeta)
     ->UseManualTime()
     ->Unit(benchmark::kMillisecond)
     ->RangeMultiplier(2)
-    ->Ranges({{2048, 8192}, {4, 16}});
+    ->Ranges({{2048, 8192}, BLOCK_SIZE_RANGES});
 
 BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_s)(benchmark::State &state)
 {
     const int m = state.range(0);
     const int n = state.range(1);
     auto [d_A, d_X, d_B] = initialize_inputs(m, n);
+    nvtx3::mark("get_s (" + std::to_string(m) + ", " + std::to_string(n) + ")");
 
     DeviceBuffer d = filled_device_buffer(cusolverH, cusolverParams, cublasH, m, n, d_A, d_X, d_B);
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -284,13 +291,14 @@ BENCHMARK_REGISTER_F(DR_BCG_Benchmark, get_s)
     ->UseManualTime()
     ->Unit(benchmark::kMillisecond)
     ->RangeMultiplier(2)
-    ->Ranges({{2048, 8192}, {4, 16}});
+    ->Ranges({{2048, 8192}, BLOCK_SIZE_RANGES});
 
 BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_sigma)(benchmark::State &state)
 {
     const int m = state.range(0);
     const int n = state.range(1);
     auto [d_A, d_X, d_B] = initialize_inputs(m, n);
+    nvtx3::mark("get_sigma (" + std::to_string(m) + ", " + std::to_string(n) + ")");
 
     DeviceBuffer d = filled_device_buffer(cusolverH, cusolverParams, cublasH, m, n, d_A, d_X, d_B);
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -305,7 +313,7 @@ BENCHMARK_DEFINE_F(DR_BCG_Benchmark, get_sigma)(benchmark::State &state)
     std::vector<float> h_sigma(n * n);
     CUDA_CHECK(cudaMemcpy(h_zeta.data(), d.zeta, sizeof(float) * h_zeta.size(), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(h_sigma.data(), d.sigma, sizeof(float) * h_sigma.size(), cudaMemcpyDeviceToHost));
-    
+
     for (auto _ : state)
     {
         CUDA_CHECK(cudaMemcpy(d.zeta, h_zeta.data(), sizeof(float) * h_zeta.size(), cudaMemcpyHostToDevice));
@@ -322,7 +330,7 @@ BENCHMARK_REGISTER_F(DR_BCG_Benchmark, get_sigma)
     ->UseManualTime()
     ->Unit(benchmark::kMillisecond)
     ->RangeMultiplier(2)
-    ->Ranges({{2048, 8192}, {4, 16}});
+    ->Ranges({{2048, 8192}, BLOCK_SIZE_RANGES});
 
 BENCHMARK_DEFINE_F(QR_Benchmark, qr_factorization)(benchmark::State &state)
 {
@@ -358,7 +366,7 @@ BENCHMARK_REGISTER_F(QR_Benchmark, qr_factorization)
     ->UseManualTime()
     ->Unit(benchmark::kMillisecond)
     ->RangeMultiplier(2)
-    ->Ranges({{2048, 8192}, {4, 16}});
+    ->Ranges({{2048, 8192}, BLOCK_SIZE_RANGES});
 
 BENCHMARK_DEFINE_F(QR_Benchmark, thin_qr)(benchmark::State &state)
 {
@@ -396,4 +404,4 @@ BENCHMARK_REGISTER_F(QR_Benchmark, thin_qr)
     ->UseManualTime()
     ->Unit(benchmark::kMillisecond)
     ->RangeMultiplier(2)
-    ->Ranges({{2048, 8192}, {4, 16}});
+    ->Ranges({{2048, 8192}, BLOCK_SIZE_RANGES});

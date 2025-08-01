@@ -17,8 +17,8 @@ target_link_libraries(
     dr_bcg PUBLIC
     CUDA::cublas
     CUDA::cusolver
+    nvtx3-cpp
 )
-target_link_libraries(dr_bcg PRIVATE nvtx3-cpp)
 
 target_compile_options(dr_bcg PUBLIC
     $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
