@@ -460,17 +460,14 @@ int main(int argc, char **argv)
 
     benchmark::MaybeReenterWithoutASLR(argc, argv);
 
-    std::vector<char *> args;
     std::string data_file;
     for (int i = 0; i < argc; i++)
     {
         std::string arg = argv[i];
-        args.push_back(argv[i]);
         if (arg == "-d")
         {
             if (i + 1 < argc)
             {
-                args.pop_back();
                 data_file = argv[i + 1];
                 for (int j = i; j < argc - 2; j++)
                 {
