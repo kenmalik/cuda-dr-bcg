@@ -1,5 +1,5 @@
 #include <iostream>
-#include <vector>
+#include <fstream>
 #include <cublas_v2.h>
 #include "dr_bcg/helper.h"
 
@@ -111,4 +111,23 @@ void check_nan(const float *d_arr, size_t size, std::string step)
             throw std::runtime_error("NaN detected after step: " + step);
         }
     }
+}
+
+std::vector<double> read_matrix_bin(std::string filename)
+{
+    std::ifstream input_file(filename, std::ios::binary);
+    if (!input_file.is_open()) {
+        std::cerr << "Error opening file " << filename << std::endl;
+        exit(1);
+    }
+
+    input_file.seekg(0, std::ios::end);
+    long long file_size = input_file.tellg();
+    input_file.seekg(0, std::ios::beg);
+
+    size_t num_doubles = file_size / sizeof(double);
+    std::vector<double> matrix(num_doubles);
+    input_file.read(reinterpret_cast<char *>(matrix.data()), file_size);
+
+    return matrix;
 }

@@ -18,3 +18,11 @@ suitesparse: build
 	else \
 		echo "ERROR: Variable SUITESPARSE_DIR needs to be defined"; \
 	fi
+
+microbenchmark: build
+	if [[ -n "${OUT_DIR}" ]]; then \
+		sbatch --account=${ACCOUNT} -o ${OUT_DIR}/%x.%j.%N.out -e ${OUT_DIR}/%x.%j.%N.err scripts/run_microbenchmarks.slurm; \
+		squeue -u ${USER}; \
+	else \
+		echo "ERROR: Variable OUT_DIR needs to be defined"; \
+	fi
