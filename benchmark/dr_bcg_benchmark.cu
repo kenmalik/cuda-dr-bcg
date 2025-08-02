@@ -98,8 +98,6 @@ private:
     }
 };
 
-static bool context_added = false;
-
 static const std::vector<int64_t> INPUT_DIMENSION_RANGE = benchmark::CreateRange(2048, 8192, 2);
 static const std::vector<int64_t> BLOCK_SIZE_RANGE = []()
 {
@@ -108,33 +106,7 @@ static const std::vector<int64_t> BLOCK_SIZE_RANGE = []()
     return list;
 }();
 
-class CUDA_Benchmark : public benchmark::Fixture
-{
-public:
-    CUDA_Benchmark()
-    {
-        if (!context_added)
-        {
-            add_context();
-            context_added = true;
-        }
-    }
-
-private:
-    void add_context()
-    {
-        int device = 0;
-        CUDA_CHECK(cudaGetDevice(&device));
-
-        cudaDeviceProp prop;
-        CUDA_CHECK(cudaGetDeviceProperties(&prop, device));
-
-        benchmark::AddCustomContext("device", prop.name);
-        benchmark::AddCustomContext("compute_capability", std::to_string(prop.major) + "." + std::to_string(prop.minor));
-    }
-};
-
-class DR_BCG_Benchmark : public CUDA_Benchmark
+class DR_BCG_Benchmark : public benchmark::Fixture
 {
 protected:
     cublasHandle_t cublasH = NULL;
@@ -193,10 +165,6 @@ protected:
 
         return d;
     }
-};
-
-class QR_Benchmark : public CUDA_Benchmark
-{
 };
 
 BENCHMARK_DEFINE_F(DR_BCG_Benchmark, DR_BCG)(benchmark::State &state)
@@ -396,6 +364,10 @@ BENCHMARK_REGISTER_F(DR_BCG_Benchmark, get_sigma)
     ->Unit(benchmark::kMillisecond)
     ->ArgsProduct({BLOCK_SIZE_RANGE});
 
+class QR_Benchmark : public benchmark::Fixture
+{
+};
+
 BENCHMARK_DEFINE_F(QR_Benchmark, qr_factorization)(benchmark::State &state)
 {
     const int m = state.range(0);
@@ -470,8 +442,22 @@ BENCHMARK_REGISTER_F(QR_Benchmark, thin_qr)
     ->ArgsProduct({INPUT_DIMENSION_RANGE,
                    BLOCK_SIZE_RANGE});
 
+void add_context()
+{
+    int device = 0;
+    CUDA_CHECK(cudaGetDevice(&device));
+
+    cudaDeviceProp prop;
+    CUDA_CHECK(cudaGetDeviceProperties(&prop, device));
+
+    benchmark::AddCustomContext("device", prop.name);
+    benchmark::AddCustomContext("compute_capability", std::to_string(prop.major) + "." + std::to_string(prop.minor));
+}
+
 int main(int argc, char **argv)
 {
+    add_context();
+
     benchmark::MaybeReenterWithoutASLR(argc, argv);
 
     std::vector<char *> args;
