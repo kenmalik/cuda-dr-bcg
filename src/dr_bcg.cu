@@ -161,7 +161,11 @@ namespace dr_bcg
         // R = B - AX
         get_R(cublasH, d_R, m, n, A, X, B);
 
+#ifdef USE_THIN_QR
+        thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.sigma, m, n, d_R);
+#else
         qr_factorization(cusolverH, cusolverParams, d.w, d.sigma, m, n, d_R);
+#endif
 
         CUDA_CHECK(cudaFree(d_R)); // Never used later
 
@@ -264,7 +268,11 @@ namespace dr_bcg
                                     &alpha_2, d.temp, m, d.xi, n,
                                     &beta_2, d.w, m));
 
+#ifdef USE_THIN_QR
+        thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.zeta, m, n, d.w);
+#else
         qr_factorization(cusolverH, cusolverParams, d.w, d.zeta, m, n, d.w);
+#endif
     }
 
     /**
@@ -361,6 +369,15 @@ namespace dr_bcg
                                     &beta, R, m));
     }
 
+#ifdef USE_THIN_QR
+
+    void qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *Q, float *R, const int m, const int n, const float *A)
+    {
+        throw std::runtime_error("qr_factorization not built");
+    }
+
+#else
+
     /**
      * @brief Computes the QR factorization of matrix A.
      *
@@ -443,6 +460,25 @@ namespace dr_bcg
         CUDA_CHECK(cudaFree(d_tau));
         CUDA_CHECK(cudaFree(d_work));
     }
+
+#endif
+
+#ifndef USE_THIN_QR
+
+    void thin_qr(
+        cusolverDnHandle_t &cusolverH,
+        cusolverDnParams_t &params,
+        cublasHandle_t &cublasH,
+        float *Q,
+        float *R,
+        const int m,
+        const int n,
+        const float *A)
+    {
+        throw std::runtime_error("thin_qr not built");
+    }
+
+#else
 
     void thin_qr(
         cusolverDnHandle_t &cusolverH,
@@ -556,6 +592,8 @@ namespace dr_bcg
 
         CUDA_CHECK(cudaFree(d_H));
     }
+
+#endif
 
     /**
      * @brief Computes the inverse of a matrix using Cholesky factorization.
