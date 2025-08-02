@@ -1,3 +1,5 @@
+option(DR_BCG_USE_THIN_QR "Use thin QR procedure instead of standard QR factorization" OFF)
+
 include(FetchContent)
 FetchContent_Declare(
     nvtx
@@ -19,6 +21,10 @@ target_link_libraries(
     CUDA::cusolver
     nvtx3-cpp
 )
+
+if (DR_BCG_USE_THIN_QR)
+    target_compile_definitions(dr_bcg PRIVATE "USE_THIN_QR")
+endif()
 
 target_compile_options(dr_bcg PUBLIC
     $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
