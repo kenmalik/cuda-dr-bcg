@@ -1,3 +1,5 @@
+#include <functional>
+
 #include <cublas_v2.h>
 #include <cusolverDn.h>
 #include <cuda_runtime.h>
@@ -11,10 +13,10 @@
 
 static bool context_added = false;
 
-class Benchmark : public benchmark::Fixture
+class CUDA_Benchmark : public benchmark::Fixture
 {
 public:
-    Benchmark()
+    CUDA_Benchmark()
     {
         if (!context_added)
         {
@@ -37,7 +39,15 @@ private:
     }
 };
 
-BENCHMARK_DEFINE_F(Benchmark, DR_BCG)(benchmark::State &state)
+class DR_BCG_Benchmark : public CUDA_Benchmark
+{
+};
+
+class QR_Benchmark : public CUDA_Benchmark
+{
+};
+
+BENCHMARK_DEFINE_F(CUDA_Benchmark, DR_BCG)(benchmark::State &state)
 {
     const int m = state.range(0);
     const int n = state.range(1);
@@ -101,7 +111,103 @@ BENCHMARK_DEFINE_F(Benchmark, DR_BCG)(benchmark::State &state)
     state.counters["performed_algorithm_iterations"] = iterations;
     state.counters["max_algorithm_iterations"] = max_iterations;
 }
-BENCHMARK_REGISTER_F(Benchmark, DR_BCG)
+BENCHMARK_REGISTER_F(CUDA_Benchmark, DR_BCG)
+    ->MinWarmUpTime(1.0)
+    ->UseManualTime()
+    ->Unit(benchmark::kMillisecond)
+    ->RangeMultiplier(2)
+    ->Ranges({{2048, 8192}, {4, 16}});
+
+BENCHMARK_DEFINE_F(QR_Benchmark, qr_factorization)(benchmark::State &state)
+{
+    const int m = state.range(0);
+    const int n = state.range(1);
+
+    std::vector<float> h_A(m * n);
+    fill_random(h_A.data(), m, n);
+
+    float *d_A = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_A, sizeof(float) * h_A.size()));
+    CUDA_CHECK(cudaMemcpy(d_A, h_A.data(), sizeof(float) * h_A.size(), cudaMemcpyHostToDevice));
+
+    float *d_Q = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_Q, sizeof(float) * m * n));
+
+    float *d_R = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_R, sizeof(float) * n * n));
+
+    cusolverDnHandle_t cusolverH = NULL;
+    cusolverDnParams_t cusolverParams = NULL;
+
+    CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
+    CUSOLVER_CHECK(cusolverDnCreateParams(&cusolverParams));
+
+    for (auto _ : state)
+    {
+        cudaEvent_t start, stop;
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
+
+        cudaEventRecord(start);
+        dr_bcg::qr_factorization(cusolverH, cusolverParams, d_Q, d_R, m, n, d_A);
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+
+        float ms = 0;
+        cudaEventElapsedTime(&ms, start, stop);
+        state.SetIterationTime(ms / 1000.0);
+    }
+}
+BENCHMARK_REGISTER_F(QR_Benchmark, qr_factorization)
+    ->MinWarmUpTime(1.0)
+    ->UseManualTime()
+    ->Unit(benchmark::kMillisecond)
+    ->RangeMultiplier(2)
+    ->Ranges({{2048, 8192}, {4, 16}});
+
+BENCHMARK_DEFINE_F(QR_Benchmark, thin_qr)(benchmark::State &state)
+{
+    const int m = state.range(0);
+    const int n = state.range(1);
+
+    std::vector<float> h_A(m * n);
+    fill_random(h_A.data(), m, n);
+
+    float *d_A = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_A, sizeof(float) * h_A.size()));
+    CUDA_CHECK(cudaMemcpy(d_A, h_A.data(), sizeof(float) * h_A.size(), cudaMemcpyHostToDevice));
+
+    float *d_Q = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_Q, sizeof(float) * m * n));
+
+    float *d_R = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_R, sizeof(float) * n * n));
+
+    cublasHandle_t cublasH = NULL;
+    cusolverDnHandle_t cusolverH = NULL;
+    cusolverDnParams_t cusolverParams = NULL;
+
+    CUBLAS_CHECK(cublasCreate_v2(&cublasH));
+    CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
+    CUSOLVER_CHECK(cusolverDnCreateParams(&cusolverParams));
+
+    for (auto _ : state)
+    {
+        cudaEvent_t start, stop;
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
+
+        cudaEventRecord(start);
+        dr_bcg::thin_qr(cusolverH, cusolverParams, cublasH, d_Q, d_R, m, n, d_A);
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+
+        float ms = 0;
+        cudaEventElapsedTime(&ms, start, stop);
+        state.SetIterationTime(ms / 1000.0);
+    }
+}
+BENCHMARK_REGISTER_F(QR_Benchmark, thin_qr)
     ->MinWarmUpTime(1.0)
     ->UseManualTime()
     ->Unit(benchmark::kMillisecond)

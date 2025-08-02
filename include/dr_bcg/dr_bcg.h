@@ -5,6 +5,8 @@
 
 namespace dr_bcg
 {
+    void copy_upper_triangular(float *dst, float *src, const int m, const int n);
+
     std::tuple<std::vector<float>, int> dr_bcg(
         const std::vector<float> &A,
         const std::vector<float> &X,
@@ -32,6 +34,16 @@ namespace dr_bcg
     void next_X(cublasHandle_t &cublasH, const int m, const int n, const float *d_s, const float *d_xi, float *d_temp, const float *d_sigma, float *d_X);
 
     void quadratic_form(cublasHandle_t &cublasH, const int m, const int n, const float *d_s, const float *d_A, float *d_work, float *d_y);
+
+    void thin_qr(
+        cusolverDnHandle_t &cusolverH,
+        cusolverDnParams_t &params,
+        cublasHandle_t &cublasH,
+        float *Q,
+        float *R,
+        const int m,
+        const int n,
+        const float *A);
 
     void qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *Q, float *R, const int m, const int n, const float *A);
 

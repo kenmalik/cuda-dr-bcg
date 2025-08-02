@@ -95,26 +95,31 @@ __global__ void symmetrize_matrix(float *A, const int n)
  * @brief CUDA kernel to copy upper triangular of a matrix stored in column-major order.
  *
  * @param dst Pointer to destination device matrix (n x n)
- * @param src Pointer to source device matrix (n x n)
- * @param n Matrix dimension
+ * @param src Pointer to source device matrix (m x n)
+ * @param m Matrix dimension m
+ * @param n Matrix dimension n
  */
-__global__ void copy_upper_triangular(float *dst, float *src, const int n)
+__global__ void copy_upper_triangular_kernel(float *dst, float *src, const int m, const int n)
 {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (col <= row && row < n && col < n)
     {
-        dst[row * n + col] = src[row * n + col];
-    }
-    else
-    {
-        dst[row * n + col] = 0;
+        dst[row * n + col] = src[row * m + col];
     }
 }
 
 namespace dr_bcg
 {
+    void copy_upper_triangular(float *dst, float *src, const int m, const int n)
+    {
+        constexpr int block_n = 16;
+        constexpr dim3 block_dim(block_n, block_n);
+        dim3 grid_dim((n + block_n - 1) / block_n, (n + block_n - 1) / block_n);
+        copy_upper_triangular_kernel<<<grid_dim, block_dim>>>(dst, src, m, n);
+    }
+
     /**
      * @brief Convenience wrapper for DR-BCG solver routine.
      *
@@ -221,8 +226,7 @@ namespace dr_bcg
         // R = B - AX
         get_R(cublasH, d_R, m, n, A, X, B);
 
-        // [w, sigma] = qr(R)
-        qr_factorization(cusolverH, cusolverParams, d.w, d.sigma, m, n, d_R);
+        thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.sigma, m, n, d_R);
 
         CUDA_CHECK(cudaFree(d_R)); // Never used later
 
@@ -276,7 +280,7 @@ namespace dr_bcg
                                             &alpha, d.temp, m, d.xi, n,
                                             &beta, d.w, m));
 
-                qr_factorization(cusolverH, cusolverParams, d.w, d.zeta, m, n, d.w);
+                thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.zeta, m, n, d.w);
 
                 // temp = s * zeta'
                 alpha = 1;
@@ -454,15 +458,7 @@ namespace dr_bcg
 
         const int max_R_col = std::min(m, n);
 
-        constexpr int block_n = 16;
-        dim3 block_dim(block_n, block_n);
-        dim3 grid_dim((n + block_n - 1) / block_n, (n + block_n - 1) / block_n);
-        copy_upper_triangular<<<grid_dim, block_dim>>>(R, Q, n);
-
-        for (int col = 0; col < max_R_col; col++)
-        {
-            CUDA_CHECK(cudaMemcpy(R + col * n, Q + col * m, sizeof(float) * (col + 1), cudaMemcpyDeviceToDevice));
-        }
+        copy_upper_triangular(R, Q, m, n);
 
         CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
         if (0 > info)
@@ -484,6 +480,119 @@ namespace dr_bcg
         CUDA_CHECK(cudaFree(d_info));
         CUDA_CHECK(cudaFree(d_tau));
         CUDA_CHECK(cudaFree(d_work));
+    }
+
+    void thin_qr(
+        cusolverDnHandle_t &cusolverH,
+        cusolverDnParams_t &params,
+        cublasHandle_t &cublasH,
+        float *Q,
+        float *R,
+        const int m,
+        const int n,
+        const float *A)
+    {
+        // H = M^T * M
+        float *d_H = nullptr;
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_H), sizeof(float) * n * n));
+
+        constexpr float alpha = 1;
+        constexpr float beta = 0;
+        CUBLAS_CHECK(cublasSgemm_v2(
+            cublasH, CUBLAS_OP_T, CUBLAS_OP_N, n, n, m,
+            &alpha, A, m, A, m,
+            &beta, d_H, n));
+
+        // R^T * R = H
+        void *h_work = nullptr;
+        size_t h_lwork_Xpotrf = 0;
+        void *d_work = nullptr;
+        size_t d_lwork_Xpotrf = 0;
+
+        int info = 0;
+        int *d_info = nullptr;
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
+
+        CUSOLVER_CHECK(cusolverDnXpotrf_bufferSize(
+            cusolverH, params, CUBLAS_FILL_MODE_UPPER, n,
+            CUDA_R_32F, d_H, n,
+            CUDA_R_32F, &d_lwork_Xpotrf, &h_lwork_Xpotrf));
+
+        if (h_lwork_Xpotrf > 0)
+        {
+            h_work = reinterpret_cast<void *>(malloc(h_lwork_Xpotrf));
+            if (h_work == nullptr)
+            {
+                throw std::runtime_error("Error: h_work not allocated.");
+            }
+        }
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), d_lwork_Xpotrf));
+
+        CUSOLVER_CHECK(cusolverDnXpotrf(
+            cusolverH, params, CUBLAS_FILL_MODE_UPPER, n,
+            CUDA_R_32F, d_H, n,
+            CUDA_R_32F, d_work, d_lwork_Xpotrf, h_work, h_lwork_Xpotrf, d_info));
+
+        CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
+        if (info < 0)
+        {
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
+        }
+        if (info > 0)
+        {
+            throw std::runtime_error("cusolverDnXpotrf (Cholesky factorization) failed. The smallest leading minor of d_H which is not positive definite is " + std::to_string(info));
+        }
+
+        copy_upper_triangular(R, d_H, n, n);
+
+        // Q = M * R^-1
+        size_t d_lwork_Xtrtri = 0;
+        size_t h_lwork_Xtrtri = 0;
+        info = 0;
+
+        CUSOLVER_CHECK(cusolverDnXtrtri_bufferSize(
+            cusolverH, CUBLAS_FILL_MODE_UPPER, CUBLAS_DIAG_NON_UNIT, n,
+            CUDA_R_32F, d_H, n,
+            &d_lwork_Xtrtri, &h_lwork_Xtrtri));
+
+        if (h_lwork_Xtrtri > h_lwork_Xpotrf)
+        {
+            if (h_work != nullptr)
+            {
+                free(h_work);
+            }
+            h_work = reinterpret_cast<void *>(malloc(h_lwork_Xtrtri));
+        }
+        if (d_lwork_Xtrtri > d_lwork_Xpotrf)
+        {
+            CUDA_CHECK(cudaFree(d_work));
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), d_lwork_Xtrtri));
+        }
+
+        CUSOLVER_CHECK(cusolverDnXtrtri(
+            cusolverH, CUBLAS_FILL_MODE_UPPER, CUBLAS_DIAG_NON_UNIT, n,
+            CUDA_R_32F, d_H, n,
+            d_work, d_lwork_Xtrtri, h_work, h_lwork_Xtrtri, d_info));
+
+        CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
+        if (info < 0)
+        {
+            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
+        }
+
+        CUBLAS_CHECK(cublasStrmm_v2(
+            cublasH, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER,
+            CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT, m, n,
+            &alpha, d_H, n, A, m, Q, m));
+
+        if (h_work != nullptr)
+        {
+            free(h_work);
+        }
+        CUDA_CHECK(cudaFree(d_work));
+        CUDA_CHECK(cudaFree(d_info));
+
+        CUDA_CHECK(cudaFree(d_H));
     }
 
     /**

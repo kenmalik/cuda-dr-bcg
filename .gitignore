@@ -41,6 +41,7 @@
 
 # Python
 .venv
+__pycache__/
 
 # Benchmark Output
 *.bench
@@ -48,4 +49,4 @@
 *.bench.json
 
 build/
-output/
+*.csv
