@@ -21,7 +21,7 @@ suitesparse: build
 
 microbenchmark: build
 	if [[ -n "${OUT_DIR}" ]]; then \
-		sbatch --account=${ACCOUNT} -o ${OUT_DIR}/mbench.%x.%j.%N.out -e ${OUT_DIR}/mbench.%x.%j.%N.err scripts/run_microbenchmarks.slurm; \
+		sbatch --account=${ACCOUNT} -o ${OUT_DIR}/%x.%j.%N.out -e ${OUT_DIR}/%x.%j.%N.err scripts/run_microbenchmarks.slurm; \
 		squeue -u ${USER}; \
 	else \
 		echo "ERROR: Variable OUT_DIR needs to be defined"; \

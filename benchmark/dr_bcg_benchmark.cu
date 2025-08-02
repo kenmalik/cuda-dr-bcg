@@ -499,6 +499,7 @@ int main(int argc, char **argv)
         constexpr int n = 4096;
         BenchmarkData::get_data().load_random(n);
     }
+    benchmark::AddCustomContext("m", std::to_string(BenchmarkData::get_m()));
 
     benchmark::RunSpecifiedBenchmarks();
     benchmark::Shutdown();
