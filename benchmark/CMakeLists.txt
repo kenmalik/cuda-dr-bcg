@@ -16,6 +16,5 @@ add_executable(
 target_link_libraries(
     dr_bcg_benchmark PRIVATE
     benchmark::benchmark
-    benchmark::benchmark_main
     dr_bcg
 )
