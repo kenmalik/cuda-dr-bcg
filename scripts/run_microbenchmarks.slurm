@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --gpus-per-node=1
 #SBATCH --no-requeue
-#SBATCH -t 02:00:00
+#SBATCH -t 08:00:00
 
 if [[ -z ${BIN_DIR} ]]; then
     echo "cannot read matrices: BIN_DIR is not defined"
