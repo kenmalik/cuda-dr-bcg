@@ -23,7 +23,7 @@ target_link_libraries(
 )
 
 if (DR_BCG_USE_THIN_QR)
-    target_compile_definitions(dr_bcg PRIVATE "USE_THIN_QR")
+    target_compile_definitions(dr_bcg PUBLIC "USE_THIN_QR")
 endif()
 
 target_compile_options(dr_bcg PUBLIC

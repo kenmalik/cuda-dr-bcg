@@ -157,7 +157,13 @@ protected:
 
         // R = B - AX
         dr_bcg::get_R(cublasH, d_R, m, n, d_A, d_X, d_B);
+
+#ifdef USE_THIN_QR
+        dr_bcg::thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.sigma, m, n, d_R);
+#else
         dr_bcg::qr_factorization(cusolverH, cusolverParams, d.w, d.sigma, m, n, d_R);
+#endif
+
         CUDA_CHECK(cudaFree(d_R)); // Never used later
 
         // s = w
