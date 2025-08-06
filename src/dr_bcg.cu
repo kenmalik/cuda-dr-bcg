@@ -9,24 +9,6 @@
 #include "dr_bcg/helper.h"
 
 /**
- * @brief CUDA kernel to symmetrize a square matrix in-place.
- *
- * Copies the lower triangle to the upper triangle to ensure symmetry.
- * @param A Pointer to device matrix (n x n)
- * @param n Matrix dimension
- */
-__global__ void symmetrize_matrix(float *A, const int n)
-{
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (row < col && row < n && col < n)
-    {
-        A[col * n + row] = A[row * n + col];
-    }
-}
-
-/**
  * @brief Convenience wrapper for DR-BCG solver routine.
  *
  * Solves the block linear system AX = B using the DR-BCG algorithm, taking vectors and allocating device memory as required.
