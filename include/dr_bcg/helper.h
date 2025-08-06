@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <vector>
 #include <random>
+#include <cusolverDn.h>
 
 #define CUDA_CHECK(err)                                                            \
     do                                                                             \
@@ -51,3 +52,5 @@ void check_nan(const float *d_arr, size_t size, std::string step);
 std::vector<double> read_matrix_bin(std::string filename);
 
 void copy_upper_triangular(float *dst, float *src, const int m, const int n);
+
+void invert_square_matrix(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *A, const int n);

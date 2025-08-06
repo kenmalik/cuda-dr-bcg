@@ -246,7 +246,7 @@ TEST(InvertSquareMatrix, OutputCorrect)
     CUDA_CHECK(cudaMemcpy(d_A_inv, h_A_in.data(), sizeof(float) * h_A_in.size(), cudaMemcpyHostToDevice));
 
     // Operation
-    dr_bcg::invert_square_matrix(cusolverH, cusolverParams, d_A, m);
+    invert_square_matrix(cusolverH, cusolverParams, d_A, m);
 
     // Test A * A_inv = I
     constexpr float alpha = 1;
