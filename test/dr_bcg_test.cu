@@ -379,7 +379,7 @@ TEST(CopyUpperTriangular, OutputCorrect)
     float *d_copy = nullptr;
     CUDA_CHECK(cudaMalloc(&d_copy, sizeof(float) * copy_got.size()));
 
-    dr_bcg::copy_upper_triangular(d_copy, d_A, m, n);
+    copy_upper_triangular(d_copy, d_A, m, n);
 
     CUDA_CHECK(cudaMemcpy(copy_got.data(), d_copy, sizeof(float) * copy_got.size(), cudaMemcpyDeviceToHost));
 

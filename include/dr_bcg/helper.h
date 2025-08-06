@@ -49,3 +49,5 @@ void print_device_matrix(const float *d_mat, const int rows, const int cols);
 void check_nan(const float *d_arr, size_t size, std::string step);
 
 std::vector<double> read_matrix_bin(std::string filename);
+
+void copy_upper_triangular(float *dst, float *src, const int m, const int n);

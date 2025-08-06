@@ -27,655 +27,625 @@ __global__ void symmetrize_matrix(float *A, const int n)
 }
 
 /**
- * @brief CUDA kernel to copy upper triangular of a matrix stored in column-major order.
+ * @brief Convenience wrapper for DR-BCG solver routine.
  *
- * @param dst Pointer to destination device matrix (n x n)
- * @param src Pointer to source device matrix (m x n)
- * @param m Matrix dimension m
- * @param n Matrix dimension n
+ * Solves the block linear system AX = B using the DR-BCG algorithm, taking vectors and allocating device memory as required.
+ *
+ * @param A Host vector representing input matrix A (m x m)
+ * @param X Host vector representing initial guess X (m x n)
+ * @param B Host vector representing right-hand side B (m x n)
+ * @param m m dimension
+ * @param n n dimension
+ * @param tolerance Relative residual tolerance for convergence
+ * @param max_iterations Maximum number of iterations
+ * @return Tuple containing the solution X (as a std::vector<float>) and the number of iterations performed
  */
-__global__ void copy_upper_triangular_kernel(float *dst, float *src, const int m, const int n)
+std::tuple<std::vector<float>, int> dr_bcg::dr_bcg(
+    const std::vector<float> &A,
+    const std::vector<float> &X,
+    const std::vector<float> &B,
+    const int m,
+    const int n,
+    const float tolerance,
+    const int max_iterations)
 {
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    cublasHandle_t cublasH = NULL;
+    CUBLAS_CHECK(cublasCreate(&cublasH));
 
-    if (col <= row && row < n && col < n)
-    {
-        dst[row * n + col] = src[row * m + col];
-    }
+    cusolverDnHandle_t cusolverH = NULL;
+    cusolverDnParams_t cusolverParams = NULL;
+    CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
+    CUSOLVER_CHECK(cusolverDnCreateParams(&cusolverParams));
+
+    std::vector<float> X_final(m * n);
+    int iterations = 0;
+
+    float *d_A = nullptr;
+    float *d_X = nullptr;
+    float *d_B = nullptr;
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * m * m));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * m * n));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_B), sizeof(float) * m * n));
+
+    CUDA_CHECK(cudaMemcpy(d_A, A.data(), sizeof(float) * m * m, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_X, X.data(), sizeof(float) * m * n, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_B, B.data(), sizeof(float) * m * n, cudaMemcpyHostToDevice));
+
+    CUSOLVER_CHECK(dr_bcg(cusolverH, cusolverParams, cublasH, m, n, d_A, d_X, d_B, tolerance, max_iterations, &iterations));
+
+    CUDA_CHECK(cudaMemcpy(X_final.data(), d_X, sizeof(float) * m * n, cudaMemcpyDeviceToHost));
+
+    CUBLAS_CHECK(cublasDestroy_v2(cublasH));
+    CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
+    CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
+
+    CUDA_CHECK(cudaFree(d_A));
+    CUDA_CHECK(cudaFree(d_X));
+    CUDA_CHECK(cudaFree(d_B));
+
+    return {X_final, iterations};
 }
 
-namespace dr_bcg
+/**
+ * @brief Main DR-BCG solver routine.
+ *
+ * Solves the block linear system AX = B using the DR-BCG algorithm on device pointers.
+ *
+ * @param cusolverH cuSOLVER handle
+ * @param cusolverParams cuSOLVER params
+ * @param cublasH cuBLAS handle
+ * @param m m dimension
+ * @param n n dimension
+ * @param A Device pointer to input matrix A (m x m)
+ * @param X Device pointer to initial guess X (m x n), overwritten with solution
+ * @param B Device pointer to right-hand side B (m x n)
+ * @param tolerance Relative residual tolerance for convergence
+ * @param max_iterations Maximum number of iterations
+ * @param iterations Pointer to int, overwritten with number of iterations performed
+ * @return cuSOLVER status
+ */
+cusolverStatus_t dr_bcg::dr_bcg(
+    cusolverDnHandle_t cusolverH,
+    cusolverDnParams_t cusolverParams,
+    cublasHandle_t cublasH,
+    int m,
+    int n,
+    const float *A,
+    float *X,
+    const float *B,
+    float tolerance,
+    int max_iterations,
+    int *iterations)
 {
-    void copy_upper_triangular(float *dst, float *src, const int m, const int n)
-    {
-        constexpr int block_n = 16;
-        constexpr dim3 block_dim(block_n, block_n);
-        dim3 grid_dim((n + block_n - 1) / block_n, (n + block_n - 1) / block_n);
-        copy_upper_triangular_kernel<<<grid_dim, block_dim>>>(dst, src, m, n);
-    }
+    NVTX3_FUNC_RANGE();
 
-    /**
-     * @brief Convenience wrapper for DR-BCG solver routine.
-     *
-     * Solves the block linear system AX = B using the DR-BCG algorithm, taking vectors and allocating device memory as required.
-     *
-     * @param A Host vector representing input matrix A (m x m)
-     * @param X Host vector representing initial guess X (m x n)
-     * @param B Host vector representing right-hand side B (m x n)
-     * @param m m dimension
-     * @param n n dimension
-     * @param tolerance Relative residual tolerance for convergence
-     * @param max_iterations Maximum number of iterations
-     * @return Tuple containing the solution X (as a std::vector<float>) and the number of iterations performed
-     */
-    std::tuple<std::vector<float>, int> dr_bcg(
-        const std::vector<float> &A,
-        const std::vector<float> &X,
-        const std::vector<float> &B,
-        const int m,
-        const int n,
-        const float tolerance,
-        const int max_iterations)
-    {
-        cublasHandle_t cublasH = NULL;
-        CUBLAS_CHECK(cublasCreate(&cublasH));
+    DeviceBuffer d(m, n);
 
-        cusolverDnHandle_t cusolverH = NULL;
-        cusolverDnParams_t cusolverParams = NULL;
-        CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
-        CUSOLVER_CHECK(cusolverDnCreateParams(&cusolverParams));
+    CUBLAS_CHECK(cublasSetMathMode(cublasH, CUBLAS_TF32_TENSOR_OP_MATH));
 
-        std::vector<float> X_final(m * n);
-        int iterations = 0;
+    // We don't include d_R in device buffers because it is only used once at the beginning
+    // of the algorithm.
+    float *d_R;
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_R), sizeof(float) * m * n));
 
-        float *d_A = nullptr;
-        float *d_X = nullptr;
-        float *d_B = nullptr;
-
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * m * m));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * m * n));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_B), sizeof(float) * m * n));
-
-        CUDA_CHECK(cudaMemcpy(d_A, A.data(), sizeof(float) * m * m, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_X, X.data(), sizeof(float) * m * n, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_B, B.data(), sizeof(float) * m * n, cudaMemcpyHostToDevice));
-
-        CUSOLVER_CHECK(dr_bcg(cusolverH, cusolverParams, cublasH, m, n, d_A, d_X, d_B, tolerance, max_iterations, &iterations));
-
-        CUDA_CHECK(cudaMemcpy(X_final.data(), d_X, sizeof(float) * m * n, cudaMemcpyDeviceToHost));
-
-        CUBLAS_CHECK(cublasDestroy_v2(cublasH));
-        CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
-        CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
-
-        CUDA_CHECK(cudaFree(d_A));
-        CUDA_CHECK(cudaFree(d_X));
-        CUDA_CHECK(cudaFree(d_B));
-
-        return {X_final, iterations};
-    }
-
-    /**
-     * @brief Main DR-BCG solver routine.
-     *
-     * Solves the block linear system AX = B using the DR-BCG algorithm on device pointers.
-     *
-     * @param cusolverH cuSOLVER handle
-     * @param cusolverParams cuSOLVER params
-     * @param cublasH cuBLAS handle
-     * @param m m dimension
-     * @param n n dimension
-     * @param A Device pointer to input matrix A (m x m)
-     * @param X Device pointer to initial guess X (m x n), overwritten with solution
-     * @param B Device pointer to right-hand side B (m x n)
-     * @param tolerance Relative residual tolerance for convergence
-     * @param max_iterations Maximum number of iterations
-     * @param iterations Pointer to int, overwritten with number of iterations performed
-     * @return cuSOLVER status
-     */
-    cusolverStatus_t dr_bcg(
-        cusolverDnHandle_t cusolverH,
-        cusolverDnParams_t cusolverParams,
-        cublasHandle_t cublasH,
-        int m,
-        int n,
-        const float *A,
-        float *X,
-        const float *B,
-        float tolerance,
-        int max_iterations,
-        int *iterations)
-    {
-        NVTX3_FUNC_RANGE();
-
-        DeviceBuffer d(m, n);
-
-        CUBLAS_CHECK(cublasSetMathMode(cublasH, CUBLAS_TF32_TENSOR_OP_MATH));
-
-        // We don't include d_R in device buffers because it is only used once at the beginning
-        // of the algorithm.
-        float *d_R;
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_R), sizeof(float) * m * n));
-
-        // R = B - AX
-        get_R(cublasH, d_R, m, n, A, X, B);
+    // R = B - AX
+    get_R(cublasH, d_R, m, n, A, X, B);
 
 #ifdef USE_THIN_QR
-        thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.sigma, m, n, d_R);
+    thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.sigma, m, n, d_R);
 #else
-        qr_factorization(cusolverH, cusolverParams, d.w, d.sigma, m, n, d_R);
+    qr_factorization(cusolverH, cusolverParams, d.w, d.sigma, m, n, d_R);
 #endif
 
-        CUDA_CHECK(cudaFree(d_R)); // Never used later
+    CUDA_CHECK(cudaFree(d_R)); // Never used later
 
-        // s = w
-        CUDA_CHECK(cudaMemcpy(d.s, d.w, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
+    // s = w
+    CUDA_CHECK(cudaMemcpy(d.s, d.w, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
 
-        float B1_norm;
-        CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, B, 1, &B1_norm));
+    float B1_norm;
+    CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, B, 1, &B1_norm));
 
-        *iterations = 0;
-        while (*iterations < max_iterations)
+    *iterations = 0;
+    while (*iterations < max_iterations)
+    {
+        nvtx3::scoped_range loop{"iteration_" + std::to_string(*iterations)};
+
+        (*iterations)++;
+
+        // xi = (s' * A * s)^-1
+        get_xi(cusolverH, cusolverParams, cublasH, m, n, d, A);
+
+        // X = X + s * xi * sigma
+        get_next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, X);
+
+        // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
+        float relative_residual_norm;
+        residual(cublasH, d.residual, B, m, A, X);
+
+        CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, d.residual, 1, &relative_residual_norm));
+        relative_residual_norm /= B1_norm;
+
+        if (relative_residual_norm < tolerance)
         {
-            nvtx3::scoped_range loop{"iteration_" + std::to_string(*iterations)};
-
-            (*iterations)++;
-
-            // xi = (s' * A * s)^-1
-            get_xi(cusolverH, cusolverParams, cublasH, m, n, d, A);
-
-            // X = X + s * xi * sigma
-            get_next_X(cublasH, m, n, d.s, d.xi, d.temp, d.sigma, X);
-
-            // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
-            float relative_residual_norm;
-            residual(cublasH, d.residual, B, m, A, X);
-
-            CUBLAS_CHECK(cublasSnrm2_v2(cublasH, m, d.residual, 1, &relative_residual_norm));
-            relative_residual_norm /= B1_norm;
-
-            if (relative_residual_norm < tolerance)
-            {
-                break;
-            }
-            else
-            {
-                nvtx3::scoped_range new_s_and_sigma{"get_new_s_and_sigma"};
-
-                get_w_zeta(cusolverH, cusolverParams, cublasH, m, n, d, A);
-
-                get_s(cublasH, m, n, d);
-
-                get_sigma(cublasH, n, d);
-            }
+            break;
         }
+        else
+        {
+            nvtx3::scoped_range new_s_and_sigma{"get_new_s_and_sigma"};
 
-        return CUSOLVER_STATUS_SUCCESS;
+            get_w_zeta(cusolverH, cusolverParams, cublasH, m, n, d, A);
+
+            get_s(cublasH, m, n, d);
+
+            get_sigma(cublasH, n, d);
+        }
     }
 
-    void get_xi(
-        cusolverDnHandle_t &cusolverH, cusolverDnParams_t &cusolverParams, cublasHandle_t &cublasH,
-        const int m, const int n, DeviceBuffer &d, const float *d_A)
-    {
-        quadratic_form(cublasH, m, n, d.s, d_A, d.temp, d.xi);
-        invert_square_matrix(cusolverH, cusolverParams, d.xi, n);
-    }
+    return CUSOLVER_STATUS_SUCCESS;
+}
 
-    void get_sigma(cublasHandle_t cublasH, int n, DeviceBuffer &d)
-    {
-        // sigma = zeta * sigma
-        constexpr float sgemm_alpha = 1;
-        constexpr float sgemm_beta = 0;
-        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n,
-                                    &sgemm_alpha, d.zeta, n, d.sigma, n,
-                                    &sgemm_beta, d.temp, n));
-        CUDA_CHECK(cudaMemcpy(d.sigma, d.temp, sizeof(float) * n * n, cudaMemcpyDeviceToDevice));
-    }
+void dr_bcg::get_xi(
+    cusolverDnHandle_t &cusolverH, cusolverDnParams_t &cusolverParams, cublasHandle_t &cublasH,
+    const int m, const int n, DeviceBuffer &d, const float *d_A)
+{
+    quadratic_form(cublasH, m, n, d.s, d_A, d.temp, d.xi);
+    invert_square_matrix(cusolverH, cusolverParams, d.xi, n);
+}
 
-    void get_s(cublasHandle_t cublasH, const int m, const int n, DeviceBuffer &d)
-    {
-        // temp = s * zeta'
-        constexpr float strmm_alpha = 1;
-        CUBLAS_CHECK(cublasStrmm_v2(cublasH, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER,
-                                    CUBLAS_OP_T, CUBLAS_DIAG_NON_UNIT, m, n,
-                                    &strmm_alpha, d.zeta, n, d.s, m, d.temp, m));
+void dr_bcg::get_sigma(cublasHandle_t cublasH, int n, DeviceBuffer &d)
+{
+    // sigma = zeta * sigma
+    constexpr float sgemm_alpha = 1;
+    constexpr float sgemm_beta = 0;
+    CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n,
+                                &sgemm_alpha, d.zeta, n, d.sigma, n,
+                                &sgemm_beta, d.temp, n));
+    CUDA_CHECK(cudaMemcpy(d.sigma, d.temp, sizeof(float) * n * n, cudaMemcpyDeviceToDevice));
+}
 
-        // s = w + temp
-        constexpr float sgeam_alpha = 1;
-        constexpr float sgeam_beta = 1;
-        CUBLAS_CHECK(cublasSgeam(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n,
-                                 &sgeam_alpha, d.w, m, &sgeam_beta, d.temp, m, d.s, m));
-    }
+void dr_bcg::get_s(cublasHandle_t cublasH, const int m, const int n, DeviceBuffer &d)
+{
+    // temp = s * zeta'
+    constexpr float strmm_alpha = 1;
+    CUBLAS_CHECK(cublasStrmm_v2(cublasH, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER,
+                                CUBLAS_OP_T, CUBLAS_DIAG_NON_UNIT, m, n,
+                                &strmm_alpha, d.zeta, n, d.s, m, d.temp, m));
 
-    void get_w_zeta(
-        cusolverDnHandle_t &cusolverH, cusolverDnParams_t &cusolverParams, cublasHandle_t &cublasH,
-        const int m, const int n, DeviceBuffer &d, const float *d_A)
-    {
-        NVTX3_FUNC_RANGE();
+    // s = w + temp
+    constexpr float sgeam_alpha = 1;
+    constexpr float sgeam_beta = 1;
+    CUBLAS_CHECK(cublasSgeam(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n,
+                             &sgeam_alpha, d.w, m, &sgeam_beta, d.temp, m, d.s, m));
+}
 
-        // temp = A * s
-        constexpr float alpha_1 = 1;
-        constexpr float beta_1 = 0;
-        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, m,
-                                    &alpha_1, d_A, m, d.s, m,
-                                    &beta_1, d.temp, m));
+void dr_bcg::get_w_zeta(
+    cusolverDnHandle_t &cusolverH, cusolverDnParams_t &cusolverParams, cublasHandle_t &cublasH,
+    const int m, const int n, DeviceBuffer &d, const float *d_A)
+{
+    NVTX3_FUNC_RANGE();
 
-        // w - temp * xi
-        constexpr float alpha_2 = -1;
-        constexpr float beta_2 = 1;
-        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, n,
-                                    &alpha_2, d.temp, m, d.xi, n,
-                                    &beta_2, d.w, m));
+    // temp = A * s
+    constexpr float alpha_1 = 1;
+    constexpr float beta_1 = 0;
+    CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, m,
+                                &alpha_1, d_A, m, d.s, m,
+                                &beta_1, d.temp, m));
+
+    // w - temp * xi
+    constexpr float alpha_2 = -1;
+    constexpr float beta_2 = 1;
+    CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, n,
+                                &alpha_2, d.temp, m, d.xi, n,
+                                &beta_2, d.w, m));
 
 #ifdef USE_THIN_QR
-        thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.zeta, m, n, d.w);
+    thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.zeta, m, n, d.w);
 #else
-        qr_factorization(cusolverH, cusolverParams, d.w, d.zeta, m, n, d.w);
+    qr_factorization(cusolverH, cusolverParams, d.w, d.zeta, m, n, d.w);
 #endif
-    }
+}
 
-    /**
-     * @brief Calculates residual with the following formula: B^(1) - A * X^(1)
-     *
-     * @param cublasH cuBLAS handle
-     * @param d_residual Device workspace for calculation. Result is overwritten to pointed location.
-     * @param B Pointer to host memory B
-     * @param m The m-value (represents dimensions of square matrix A and length of X and B)
-     * @param d_A Pointer to device memory A
-     * @param d_X Pointer to device memory X
-     */
-    void residual(cublasHandle_t &cublasH, float *d_residual, const float *B, const int m, const float *d_A, const float *d_X)
-    {
-        CUDA_CHECK(cudaMemcpy(d_residual, B, sizeof(float) * m, cudaMemcpyDeviceToDevice));
+/**
+ * @brief Calculates residual with the following formula: B^(1) - A * X^(1)
+ *
+ * @param cublasH cuBLAS handle
+ * @param d_residual Device workspace for calculation. Result is overwritten to pointed location.
+ * @param B Pointer to host memory B
+ * @param m The m-value (represents dimensions of square matrix A and length of X and B)
+ * @param d_A Pointer to device memory A
+ * @param d_X Pointer to device memory X
+ */
+void dr_bcg::residual(cublasHandle_t &cublasH, float *d_residual, const float *B, const int m, const float *d_A, const float *d_X)
+{
+    CUDA_CHECK(cudaMemcpy(d_residual, B, sizeof(float) * m, cudaMemcpyDeviceToDevice));
 
-        constexpr float alpha = -1;
-        constexpr float beta = 1;
-        CUBLAS_CHECK(cublasSgemv_v2(
-            cublasH, CUBLAS_OP_N, m, m,
-            &alpha, d_A, m, d_X, 1,
-            &beta, d_residual, 1));
-    }
+    constexpr float alpha = -1;
+    constexpr float beta = 1;
+    CUBLAS_CHECK(cublasSgemv_v2(
+        cublasH, CUBLAS_OP_N, m, m,
+        &alpha, d_A, m, d_X, 1,
+        &beta, d_residual, 1));
+}
 
-    /**
-     * @brief Calculates next X guess with the following formula: X_{i+1} = X_{i} + s * xi * sigma
-     *
-     * @param cublasH cuBLAS handle
-     * @param m m dimension
-     * @param n n dimension
-     * @param d_s Device pointer to s (m x n)
-     * @param d_xi Device pointer to xi (n x n)
-     * @param d_temp Device pointer to temporary buffer (m x n)
-     * @param d_sigma Device pointer to sigma (n x n)
-     * @param d_X Device pointer to X (m x n). Result is overwritten to pointed location.
-     */
-    void get_next_X(cublasHandle_t &cublasH, const int m, const int n, const float *d_s, const float *d_xi, float *d_temp, const float *d_sigma, float *d_X)
-    {
-        constexpr float alpha = 1;
-        constexpr float beta = 1;
-        CUBLAS_CHECK(cublasStrmm_v2(cublasH, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT,
-                                    n, n, &alpha, d_sigma, n, d_xi, n, d_temp, n));
-        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, n,
-                                    &alpha, d_s, m, d_temp, n,
-                                    &beta, d_X, m));
-    }
+/**
+ * @brief Calculates next X guess with the following formula: X_{i+1} = X_{i} + s * xi * sigma
+ *
+ * @param cublasH cuBLAS handle
+ * @param m m dimension
+ * @param n n dimension
+ * @param d_s Device pointer to s (m x n)
+ * @param d_xi Device pointer to xi (n x n)
+ * @param d_temp Device pointer to temporary buffer (m x n)
+ * @param d_sigma Device pointer to sigma (n x n)
+ * @param d_X Device pointer to X (m x n). Result is overwritten to pointed location.
+ */
+void dr_bcg::get_next_X(cublasHandle_t &cublasH, const int m, const int n, const float *d_s, const float *d_xi, float *d_temp, const float *d_sigma, float *d_X)
+{
+    constexpr float alpha = 1;
+    constexpr float beta = 1;
+    CUBLAS_CHECK(cublasStrmm_v2(cublasH, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT,
+                                n, n, &alpha, d_sigma, n, d_xi, n, d_temp, n));
+    CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, n,
+                                &alpha, d_s, m, d_temp, n,
+                                &beta, d_X, m));
+}
 
-    /**
-     * @brief Compute y = x^T * A * x
-     *
-     * @param cublasH cuBLAS handle
-     * @param m m dimension
-     * @param n n dimension
-     * @param d_x Device pointer to x (n x m)
-     * @param d_A Device pointer to A (m x m)
-     * @param d_work Device pointer to workspace
-     * @param d_y Device pointer to result y (n x n)
-     */
-    void quadratic_form(cublasHandle_t &cublasH, const int m, const int n,
-                        const float *d_x, const float *d_A,
-                        float *d_work, float *d_y)
-    {
-        constexpr float alpha = 1;
-        constexpr float beta = 0;
-        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_T, CUBLAS_OP_N, n, m, m,
-                                    &alpha, d_x, m, d_A, m,
-                                    &beta, d_work, n));
-        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, n, m,
-                                    &alpha, d_work, n, d_x, m,
-                                    &beta, d_y, n));
-    }
+/**
+ * @brief Compute y = x^T * A * x
+ *
+ * @param cublasH cuBLAS handle
+ * @param m m dimension
+ * @param n n dimension
+ * @param d_x Device pointer to x (n x m)
+ * @param d_A Device pointer to A (m x m)
+ * @param d_work Device pointer to workspace
+ * @param d_y Device pointer to result y (n x n)
+ */
+void dr_bcg::quadratic_form(cublasHandle_t &cublasH, const int m, const int n,
+                            const float *d_x, const float *d_A,
+                            float *d_work, float *d_y)
+{
+    constexpr float alpha = 1;
+    constexpr float beta = 0;
+    CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_T, CUBLAS_OP_N, n, m, m,
+                                &alpha, d_x, m, d_A, m,
+                                &beta, d_work, n));
+    CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, n, m,
+                                &alpha, d_work, n, d_x, m,
+                                &beta, d_y, n));
+}
 
-    /**
-     * @brief Computes R = B - AX as GEMM: R = -1.0 * AX + R where R initially contains B.
-     *
-     * @param cublasH cuBLAS handle
-     * @param d_R Device pointer to result R (m x n)
-     * @param m m dimension
-     * @param n n dimension
-     * @param A Host pointer to A (m x m)
-     * @param X Host pointer to X (m x n)
-     * @param B Host pointer to B (m x n)
-     */
-    void get_R(cublasHandle_t &cublasH, float *R, const int m, const int n, const float *A, const float *X, const float *B)
-    {
-        constexpr float alpha = -1;
-        constexpr float beta = 1;
+/**
+ * @brief Computes R = B - AX as GEMM: R = -1.0 * AX + R where R initially contains B.
+ *
+ * @param cublasH cuBLAS handle
+ * @param d_R Device pointer to result R (m x n)
+ * @param m m dimension
+ * @param n n dimension
+ * @param A Host pointer to A (m x m)
+ * @param X Host pointer to X (m x n)
+ * @param B Host pointer to B (m x n)
+ */
+void dr_bcg::get_R(cublasHandle_t &cublasH, float *R, const int m, const int n, const float *A, const float *X, const float *B)
+{
+    constexpr float alpha = -1;
+    constexpr float beta = 1;
 
-        CUDA_CHECK(cudaMemcpy(R, B, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
+    CUDA_CHECK(cudaMemcpy(R, B, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
 
-        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N,
-                                    m, n, m,
-                                    &alpha, A, m, X, m,
-                                    &beta, R, m));
-    }
+    CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N,
+                                m, n, m,
+                                &alpha, A, m, X, m,
+                                &beta, R, m));
+}
 
 #ifdef USE_THIN_QR
 
-    void qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *Q, float *R, const int m, const int n, const float *A)
-    {
-        throw std::runtime_error("qr_factorization not built");
-    }
+void dr_bcg::qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *Q, float *R, const int m, const int n, const float *A)
+{
+    throw std::runtime_error("qr_factorization not built");
+}
 
 #else
 
-    /**
-     * @brief Computes the QR factorization of matrix A.
-     *
-     * @param cusolverH cuSOLVER handle
-     * @param params Params for the cuSOLVER handle
-     * @param Q Pointer to device memory to store Q result in
-     * @param R Pointer to device memory to store R result in. Note that the lower triangular still contains householder vectors and must be handled accordingly
-     * (e.g. by using trmm in future multiplications using the R factor)
-     * @param m m-dimension (leading dimension) of A
-     * @param n n-dimension (second dimension) of A
-     * @param A The matrix to factorize (device pointer)
-     */
-    void qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *Q, float *R, const int m, const int n, const float *A)
+/**
+ * @brief Computes the QR factorization of matrix A.
+ *
+ * @param cusolverH cuSOLVER handle
+ * @param params Params for the cuSOLVER handle
+ * @param Q Pointer to device memory to store Q result in
+ * @param R Pointer to device memory to store R result in. Note that the lower triangular still contains householder vectors and must be handled accordingly
+ * (e.g. by using trmm in future multiplications using the R factor)
+ * @param m m-dimension (leading dimension) of A
+ * @param n n-dimension (second dimension) of A
+ * @param A The matrix to factorize (device pointer)
+ */
+void dr_bcg::qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *Q, float *R, const int m, const int n, const float *A)
+{
+    NVTX3_FUNC_RANGE();
+
+    int k = std::min(m, n);
+    int info = 0;
+
+    float *d_tau = nullptr;
+    int *d_info = nullptr;
+
+    size_t lwork_geqrf_d = 0;
+    void *d_work = nullptr;
+    size_t lwork_geqrf_h = 0;
+    void *h_work = nullptr;
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_tau), sizeof(float) * k));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
+
+    CUDA_CHECK(cudaMemcpy(Q, A, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
+
+    CUSOLVER_CHECK(cusolverDnXgeqrf_bufferSize(cusolverH, params, m, n, CUDA_R_32F, Q,
+                                               m, CUDA_R_32F, d_tau,
+                                               CUDA_R_32F, &lwork_geqrf_d,
+                                               &lwork_geqrf_h));
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), lwork_geqrf_d));
+
+    if (0 < lwork_geqrf_h)
     {
-        NVTX3_FUNC_RANGE();
-
-        int k = std::min(m, n);
-        int info = 0;
-
-        float *d_tau = nullptr;
-        int *d_info = nullptr;
-
-        size_t lwork_geqrf_d = 0;
-        void *d_work = nullptr;
-        size_t lwork_geqrf_h = 0;
-        void *h_work = nullptr;
-
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_tau), sizeof(float) * k));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
-
-        CUDA_CHECK(cudaMemcpy(Q, A, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
-
-        CUSOLVER_CHECK(cusolverDnXgeqrf_bufferSize(cusolverH, params, m, n, CUDA_R_32F, Q,
-                                                   m, CUDA_R_32F, d_tau,
-                                                   CUDA_R_32F, &lwork_geqrf_d,
-                                                   &lwork_geqrf_h));
-
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), lwork_geqrf_d));
-
-        if (0 < lwork_geqrf_h)
+        h_work = reinterpret_cast<void *>(malloc(lwork_geqrf_h));
+        if (h_work == nullptr)
         {
-            h_work = reinterpret_cast<void *>(malloc(lwork_geqrf_h));
-            if (h_work == nullptr)
-            {
-                throw std::runtime_error("Error: h_work not allocated.");
-            }
+            throw std::runtime_error("Error: h_work not allocated.");
         }
+    }
 
-        CUSOLVER_CHECK(cusolverDnXgeqrf(cusolverH, params, m, n, CUDA_R_32F, Q,
-                                        m, CUDA_R_32F, d_tau,
-                                        CUDA_R_32F, d_work, lwork_geqrf_d, h_work,
-                                        lwork_geqrf_h, d_info));
-        if (h_work)
-        {
-            free(h_work); // No longer needed
-        }
+    CUSOLVER_CHECK(cusolverDnXgeqrf(cusolverH, params, m, n, CUDA_R_32F, Q,
+                                    m, CUDA_R_32F, d_tau,
+                                    CUDA_R_32F, d_work, lwork_geqrf_d, h_work,
+                                    lwork_geqrf_h, d_info));
+    if (h_work)
+    {
+        free(h_work); // No longer needed
+    }
 
-        const int max_R_col = std::min(m, n);
+    const int max_R_col = std::min(m, n);
 
-        copy_upper_triangular(R, Q, m, n);
+    copy_upper_triangular(R, Q, m, n);
 
-        CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
-        if (0 > info)
-        {
-            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
-        }
+    CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
+    if (0 > info)
+    {
+        throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
+    }
 
-        // Explicitly compute Q
-        int lwork_orgqr = 0;
-        CUSOLVER_CHECK(cusolverDnSorgqr_bufferSize(cusolverH, m, n, k, Q, m, d_tau, &lwork_orgqr));
-        if (lwork_orgqr > lwork_geqrf_d)
-        {
-            CUDA_CHECK(cudaFree(d_work));
-            CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), sizeof(float) * lwork_orgqr));
-        }
-
-        CUSOLVER_CHECK(cusolverDnSorgqr(cusolverH, m, n, k, Q, m, d_tau, reinterpret_cast<float *>(d_work), lwork_orgqr, d_info));
-
-        CUDA_CHECK(cudaFree(d_info));
-        CUDA_CHECK(cudaFree(d_tau));
+    // Explicitly compute Q
+    int lwork_orgqr = 0;
+    CUSOLVER_CHECK(cusolverDnSorgqr_bufferSize(cusolverH, m, n, k, Q, m, d_tau, &lwork_orgqr));
+    if (lwork_orgqr > lwork_geqrf_d)
+    {
         CUDA_CHECK(cudaFree(d_work));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), sizeof(float) * lwork_orgqr));
     }
+
+    CUSOLVER_CHECK(cusolverDnSorgqr(cusolverH, m, n, k, Q, m, d_tau, reinterpret_cast<float *>(d_work), lwork_orgqr, d_info));
+
+    CUDA_CHECK(cudaFree(d_info));
+    CUDA_CHECK(cudaFree(d_tau));
+    CUDA_CHECK(cudaFree(d_work));
+}
 
 #endif
 
 #ifndef USE_THIN_QR
 
-    void thin_qr(
-        cusolverDnHandle_t &cusolverH,
-        cusolverDnParams_t &params,
-        cublasHandle_t &cublasH,
-        float *Q,
-        float *R,
-        const int m,
-        const int n,
-        const float *A)
-    {
-        throw std::runtime_error("thin_qr not built");
-    }
+void dr_bcg::thin_qr(
+    cusolverDnHandle_t &cusolverH,
+    cusolverDnParams_t &params,
+    cublasHandle_t &cublasH,
+    float *Q,
+    float *R,
+    const int m,
+    const int n,
+    const float *A)
+{
+    throw std::runtime_error("thin_qr not built");
+}
 
 #else
 
-    void thin_qr(
-        cusolverDnHandle_t &cusolverH,
-        cusolverDnParams_t &params,
-        cublasHandle_t &cublasH,
-        float *Q,
-        float *R,
-        const int m,
-        const int n,
-        const float *A)
+void dr_bcg::thin_qr(
+    cusolverDnHandle_t &cusolverH,
+    cusolverDnParams_t &params,
+    cublasHandle_t &cublasH,
+    float *Q,
+    float *R,
+    const int m,
+    const int n,
+    const float *A)
+{
+    // H = M^T * M
+    float *d_H = nullptr;
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_H), sizeof(float) * n * n));
+
+    constexpr float alpha = 1;
+    constexpr float beta = 0;
+    CUBLAS_CHECK(cublasSgemm_v2(
+        cublasH, CUBLAS_OP_T, CUBLAS_OP_N, n, n, m,
+        &alpha, A, m, A, m,
+        &beta, d_H, n));
+
+    // R^T * R = H
+    void *h_work = nullptr;
+    size_t h_lwork_Xpotrf = 0;
+    void *d_work = nullptr;
+    size_t d_lwork_Xpotrf = 0;
+
+    int info = 0;
+    int *d_info = nullptr;
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
+
+    CUSOLVER_CHECK(cusolverDnXpotrf_bufferSize(
+        cusolverH, params, CUBLAS_FILL_MODE_UPPER, n,
+        CUDA_R_32F, d_H, n,
+        CUDA_R_32F, &d_lwork_Xpotrf, &h_lwork_Xpotrf));
+
+    if (h_lwork_Xpotrf > 0)
     {
-        // H = M^T * M
-        float *d_H = nullptr;
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_H), sizeof(float) * n * n));
-
-        constexpr float alpha = 1;
-        constexpr float beta = 0;
-        CUBLAS_CHECK(cublasSgemm_v2(
-            cublasH, CUBLAS_OP_T, CUBLAS_OP_N, n, n, m,
-            &alpha, A, m, A, m,
-            &beta, d_H, n));
-
-        // R^T * R = H
-        void *h_work = nullptr;
-        size_t h_lwork_Xpotrf = 0;
-        void *d_work = nullptr;
-        size_t d_lwork_Xpotrf = 0;
-
-        int info = 0;
-        int *d_info = nullptr;
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
-
-        CUSOLVER_CHECK(cusolverDnXpotrf_bufferSize(
-            cusolverH, params, CUBLAS_FILL_MODE_UPPER, n,
-            CUDA_R_32F, d_H, n,
-            CUDA_R_32F, &d_lwork_Xpotrf, &h_lwork_Xpotrf));
-
-        if (h_lwork_Xpotrf > 0)
+        h_work = reinterpret_cast<void *>(malloc(h_lwork_Xpotrf));
+        if (h_work == nullptr)
         {
-            h_work = reinterpret_cast<void *>(malloc(h_lwork_Xpotrf));
-            if (h_work == nullptr)
-            {
-                throw std::runtime_error("Error: h_work not allocated.");
-            }
+            throw std::runtime_error("Error: h_work not allocated.");
         }
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), d_lwork_Xpotrf));
+    }
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), d_lwork_Xpotrf));
 
-        CUSOLVER_CHECK(cusolverDnXpotrf(
-            cusolverH, params, CUBLAS_FILL_MODE_UPPER, n,
-            CUDA_R_32F, d_H, n,
-            CUDA_R_32F, d_work, d_lwork_Xpotrf, h_work, h_lwork_Xpotrf, d_info));
+    CUSOLVER_CHECK(cusolverDnXpotrf(
+        cusolverH, params, CUBLAS_FILL_MODE_UPPER, n,
+        CUDA_R_32F, d_H, n,
+        CUDA_R_32F, d_work, d_lwork_Xpotrf, h_work, h_lwork_Xpotrf, d_info));
 
-        CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
-        if (info < 0)
-        {
-            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
-        }
-        if (info > 0)
-        {
-            throw std::runtime_error("cusolverDnXpotrf (Cholesky factorization) failed. The smallest leading minor of d_H which is not positive definite is " + std::to_string(info));
-        }
+    CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
+    if (info < 0)
+    {
+        throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
+    }
+    if (info > 0)
+    {
+        throw std::runtime_error("cusolverDnXpotrf (Cholesky factorization) failed. The smallest leading minor of d_H which is not positive definite is " + std::to_string(info));
+    }
 
-        copy_upper_triangular(R, d_H, n, n);
+    copy_upper_triangular(R, d_H, n, n);
 
-        // Q = M * R^-1
-        size_t d_lwork_Xtrtri = 0;
-        size_t h_lwork_Xtrtri = 0;
-        info = 0;
+    // Q = M * R^-1
+    size_t d_lwork_Xtrtri = 0;
+    size_t h_lwork_Xtrtri = 0;
+    info = 0;
 
-        CUSOLVER_CHECK(cusolverDnXtrtri_bufferSize(
-            cusolverH, CUBLAS_FILL_MODE_UPPER, CUBLAS_DIAG_NON_UNIT, n,
-            CUDA_R_32F, d_H, n,
-            &d_lwork_Xtrtri, &h_lwork_Xtrtri));
+    CUSOLVER_CHECK(cusolverDnXtrtri_bufferSize(
+        cusolverH, CUBLAS_FILL_MODE_UPPER, CUBLAS_DIAG_NON_UNIT, n,
+        CUDA_R_32F, d_H, n,
+        &d_lwork_Xtrtri, &h_lwork_Xtrtri));
 
-        if (h_lwork_Xtrtri > h_lwork_Xpotrf)
-        {
-            if (h_work != nullptr)
-            {
-                free(h_work);
-            }
-            h_work = reinterpret_cast<void *>(malloc(h_lwork_Xtrtri));
-        }
-        if (d_lwork_Xtrtri > d_lwork_Xpotrf)
-        {
-            CUDA_CHECK(cudaFree(d_work));
-            CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), d_lwork_Xtrtri));
-        }
-
-        CUSOLVER_CHECK(cusolverDnXtrtri(
-            cusolverH, CUBLAS_FILL_MODE_UPPER, CUBLAS_DIAG_NON_UNIT, n,
-            CUDA_R_32F, d_H, n,
-            d_work, d_lwork_Xtrtri, h_work, h_lwork_Xtrtri, d_info));
-
-        CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
-        if (info < 0)
-        {
-            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
-        }
-
-        CUBLAS_CHECK(cublasStrmm_v2(
-            cublasH, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER,
-            CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT, m, n,
-            &alpha, d_H, n, A, m, Q, m));
-
+    if (h_lwork_Xtrtri > h_lwork_Xpotrf)
+    {
         if (h_work != nullptr)
         {
             free(h_work);
         }
-        CUDA_CHECK(cudaFree(d_work));
-        CUDA_CHECK(cudaFree(d_info));
-
-        CUDA_CHECK(cudaFree(d_H));
+        h_work = reinterpret_cast<void *>(malloc(h_lwork_Xtrtri));
     }
+    if (d_lwork_Xtrtri > d_lwork_Xpotrf)
+    {
+        CUDA_CHECK(cudaFree(d_work));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), d_lwork_Xtrtri));
+    }
+
+    CUSOLVER_CHECK(cusolverDnXtrtri(
+        cusolverH, CUBLAS_FILL_MODE_UPPER, CUBLAS_DIAG_NON_UNIT, n,
+        CUDA_R_32F, d_H, n,
+        d_work, d_lwork_Xtrtri, h_work, h_lwork_Xtrtri, d_info));
+
+    CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
+    if (info < 0)
+    {
+        throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
+    }
+
+    CUBLAS_CHECK(cublasStrmm_v2(
+        cublasH, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER,
+        CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT, m, n,
+        &alpha, d_H, n, A, m, Q, m));
+
+    if (h_work != nullptr)
+    {
+        free(h_work);
+    }
+    CUDA_CHECK(cudaFree(d_work));
+    CUDA_CHECK(cudaFree(d_info));
+
+    CUDA_CHECK(cudaFree(d_H));
+}
 
 #endif
 
-    /**
-     * @brief Computes the inverse of a matrix using Cholesky factorization.
-     *
-     * @param cusolverH cuSOLVER handle
-     * @param params cuSOLVER params
-     * @param d_A Device pointer to the symmetric positive definite matrix to invert. Result is overwritten to pointed location.
-     * @param n Matrix dimension
-     */
-    void invert_square_matrix(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *d_A, const int n)
+/**
+ * @brief Computes the inverse of a matrix using Cholesky factorization.
+ *
+ * @param cusolverH cuSOLVER handle
+ * @param params cuSOLVER params
+ * @param d_A Device pointer to the symmetric positive definite matrix to invert. Result is overwritten to pointed location.
+ * @param n Matrix dimension
+ */
+void dr_bcg::invert_square_matrix(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *d_A, const int n)
+{
+    NVTX3_FUNC_RANGE();
+
+    // LU Decomposition
+    size_t workspaceInBytesOnDevice = 0;
+    void *d_work = nullptr;
+    size_t workspaceInBytesOnHost = 0;
+    void *h_work = nullptr;
+
+    int info = 0;
+    int *d_info = nullptr;
+
+    std::vector<int64_t> h_Ipiv(n, 0);
+    int64_t *d_Ipiv = nullptr;
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_Ipiv), sizeof(int64_t) * h_Ipiv.size()));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
+
+    CUSOLVER_CHECK(cusolverDnXgetrf_bufferSize(cusolverH, params, n, n,
+                                               CUDA_R_32F, d_A, n, CUDA_R_32F,
+                                               &workspaceInBytesOnDevice, &workspaceInBytesOnHost));
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), workspaceInBytesOnDevice));
+    if (0 < workspaceInBytesOnHost)
     {
-        NVTX3_FUNC_RANGE();
-
-        // LU Decomposition
-        size_t workspaceInBytesOnDevice = 0;
-        void *d_work = nullptr;
-        size_t workspaceInBytesOnHost = 0;
-        void *h_work = nullptr;
-
-        int info = 0;
-        int *d_info = nullptr;
-
-        std::vector<int64_t> h_Ipiv(n, 0);
-        int64_t *d_Ipiv = nullptr;
-
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_Ipiv), sizeof(int64_t) * h_Ipiv.size()));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
-
-        CUSOLVER_CHECK(cusolverDnXgetrf_bufferSize(cusolverH, params, n, n,
-                                                   CUDA_R_32F, d_A, n, CUDA_R_32F,
-                                                   &workspaceInBytesOnDevice, &workspaceInBytesOnHost));
-
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), workspaceInBytesOnDevice));
-        if (0 < workspaceInBytesOnHost)
+        h_work = reinterpret_cast<void *>(malloc(workspaceInBytesOnHost));
+        if (h_work == nullptr)
         {
-            h_work = reinterpret_cast<void *>(malloc(workspaceInBytesOnHost));
-            if (h_work == nullptr)
-            {
-                throw std::runtime_error("Error: h_work not allocated.");
-            }
+            throw std::runtime_error("Error: h_work not allocated.");
         }
-
-        CUSOLVER_CHECK(cusolverDnXgetrf(cusolverH, params, n, n,
-                                        CUDA_R_32F, d_A, n, d_Ipiv, CUDA_R_32F,
-                                        d_work, workspaceInBytesOnDevice,
-                                        h_work, workspaceInBytesOnHost, d_info));
-
-        CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
-        if (0 > info)
-        {
-            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
-        }
-
-        CUDA_CHECK(cudaFree(d_work));
-        free(h_work);
-
-        // Solve A * X = I for inverse
-        std::vector<float> h_I(n * n, 0);
-        float *d_I = nullptr;
-
-        for (int i = 0; i < n; i++)
-        {
-            h_I.at(i * n + i) = 1;
-        }
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_I), sizeof(float) * h_I.size()));
-        CUDA_CHECK(cudaMemcpy(d_I, h_I.data(), sizeof(float) * h_I.size(), cudaMemcpyHostToDevice));
-
-        CUSOLVER_CHECK(cusolverDnXgetrs(cusolverH, params, CUBLAS_OP_N, n, n,
-                                        CUDA_R_32F, d_A, n, d_Ipiv, CUDA_R_32F,
-                                        d_I, n, d_info));
-
-        CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
-        if (0 > info)
-        {
-            throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
-        }
-
-        CUDA_CHECK(cudaMemcpy(d_A, d_I, sizeof(float) * h_I.size(), cudaMemcpyDeviceToDevice));
-
-        CUDA_CHECK(cudaFree(d_I));
-
-        CUDA_CHECK(cudaFree(d_Ipiv));
-        CUDA_CHECK(cudaFree(d_info));
     }
+
+    CUSOLVER_CHECK(cusolverDnXgetrf(cusolverH, params, n, n,
+                                    CUDA_R_32F, d_A, n, d_Ipiv, CUDA_R_32F,
+                                    d_work, workspaceInBytesOnDevice,
+                                    h_work, workspaceInBytesOnHost, d_info));
+
+    CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
+    if (0 > info)
+    {
+        throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
+    }
+
+    CUDA_CHECK(cudaFree(d_work));
+    free(h_work);
+
+    // Solve A * X = I for inverse
+    std::vector<float> h_I(n * n, 0);
+    float *d_I = nullptr;
+
+    for (int i = 0; i < n; i++)
+    {
+        h_I.at(i * n + i) = 1;
+    }
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_I), sizeof(float) * h_I.size()));
+    CUDA_CHECK(cudaMemcpy(d_I, h_I.data(), sizeof(float) * h_I.size(), cudaMemcpyHostToDevice));
+
+    CUSOLVER_CHECK(cusolverDnXgetrs(cusolverH, params, CUBLAS_OP_N, n, n,
+                                    CUDA_R_32F, d_A, n, d_Ipiv, CUDA_R_32F,
+                                    d_I, n, d_info));
+
+    CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
+    if (0 > info)
+    {
+        throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
+    }
+
+    CUDA_CHECK(cudaMemcpy(d_A, d_I, sizeof(float) * h_I.size(), cudaMemcpyDeviceToDevice));
+
+    CUDA_CHECK(cudaFree(d_I));
+
+    CUDA_CHECK(cudaFree(d_Ipiv));
+    CUDA_CHECK(cudaFree(d_info));
 }
