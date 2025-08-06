@@ -1,7 +1,9 @@
 #pragma once
 
+#include <optional>
 #include <stdexcept>
 #include <vector>
+#include <random>
 
 #define CUDA_CHECK(err)                                                            \
     do                                                                             \
@@ -36,9 +38,9 @@
         }                                                                            \
     } while (0)
 
-void fill_random(float *mat, const int rows, const int cols);
+void fill_random(float *mat, const int rows, const int cols, const std::optional<int> seed = std::nullopt);
 
-void fill_spd(float *mat, const int n);
+void fill_spd(float *mat, const int n, const std::optional<int> seed = std::nullopt);
 
 void print_matrix(const float *mat, const int rows, const int cols);
 

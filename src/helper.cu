@@ -43,13 +43,26 @@ void print_device_matrix(const float *d_mat, const int rows, const int cols)
  * @param rows Number of rows in the matrix
  * @param cols Number of columns in the matrix
  */
-void fill_random(float *mat, const int rows, const int cols)
+void fill_random(float *mat, const int rows, const int cols, const std::optional<int> seed)
 {
+    int s;
+    if (seed)
+    {
+        s = *seed;
+    }
+    else
+    {
+        std::random_device rd;
+        s = rd();
+    }
+    std::mt19937 gen(s);
+    std::uniform_real_distribution<> dist(0, 1);
+
     for (int j = 0; j < cols; j++)
     {
         for (int i = 0; i < rows; i++)
         {
-            mat[j * rows + i] = std::rand() % 100 / 100.0;
+            mat[j * rows + i] = dist(gen);
         }
     }
 }
@@ -62,9 +75,9 @@ void fill_random(float *mat, const int rows, const int cols)
  * @param mat Pointer to the matrix data (host)
  * @param n Matrix dimensions
  */
-void fill_spd(float *mat, const int n)
+void fill_spd(float *mat, const int n, const std::optional<int> seed)
 {
-    fill_random(mat, n, n);
+    fill_random(mat, n, n, seed);
 
     cublasHandle_t cublasH;
     CUBLAS_CHECK(cublasCreate_v2(&cublasH));
@@ -116,7 +129,8 @@ void check_nan(const float *d_arr, size_t size, std::string step)
 std::vector<double> read_matrix_bin(std::string filename)
 {
     std::ifstream input_file(filename, std::ios::binary);
-    if (!input_file.is_open()) {
+    if (!input_file.is_open())
+    {
         std::cerr << "Error opening file " << filename << std::endl;
         exit(1);
     }
