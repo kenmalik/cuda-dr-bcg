@@ -549,7 +549,7 @@ void dr_bcg::thin_qr(
 #endif
 
 /**
- * @brief Computes the inverse of a matrix using Cholesky factorization.
+ * @brief Computes the inverse of a matrix using LU factorization.
  *
  * @param cusolverH cuSOLVER handle
  * @param params cuSOLVER params
