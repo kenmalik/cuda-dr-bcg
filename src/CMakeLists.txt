@@ -1,3 +1,4 @@
+option(DR_BCG_USE_TENSOR_CORES "Enable the use of tensor cores via cuBLAS math mode" OFF)
 option(DR_BCG_USE_THIN_QR "Use thin QR procedure instead of standard QR factorization" OFF)
 
 include(FetchContent)
@@ -21,6 +22,10 @@ target_link_libraries(
     CUDA::cusolver
     nvtx3-cpp
 )
+
+if (DR_BCG_USE_TENSOR_CORES)
+    target_compile_definitions(dr_bcg PRIVATE "USE_TENSOR_CORES")
+endif()
 
 if (DR_BCG_USE_THIN_QR)
     target_compile_definitions(dr_bcg PUBLIC "USE_THIN_QR")

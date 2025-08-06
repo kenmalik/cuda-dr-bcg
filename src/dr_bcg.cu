@@ -104,7 +104,9 @@ cusolverStatus_t dr_bcg::dr_bcg(
 
     DeviceBuffer d(m, n);
 
+#ifdef USE_TENSOR_CORES
     CUBLAS_CHECK(cublasSetMathMode(cublasH, CUBLAS_TF32_TENSOR_OP_MATH));
+#endif
 
     // We don't include d_R in device buffers because it is only used once at the beginning
     // of the algorithm.
