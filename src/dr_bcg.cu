@@ -808,8 +808,6 @@ void dr_bcg::residual(
 {
     NVTX3_FUNC_RANGE();
 
-    std::cerr << "TODO: implement residual" << std::endl;
-
     int64_t n = 0;
     float *d_residual = nullptr;
     cudaDataType residual_dtype;
@@ -817,12 +815,37 @@ void dr_bcg::residual(
 
     CUDA_CHECK(cudaMemcpy(d_residual, B, sizeof(float) * n, cudaMemcpyDeviceToDevice));
 
-    // constexpr float alpha = -1;
-    // constexpr float beta = 1;
-    // CUBLAS_CHECK(cublasSgemv_v2(
-    //     cublasH, CUBLAS_OP_N, m, m,
-    //     &alpha, d_A, m, d_X, 1,
-    //     &beta, d_residual, 1));
+    float *d_X = nullptr;
+    CUSPARSE_CHECK(cusparseDnMatGetValues(X, reinterpret_cast<void **>(&d_X)));
+    cusparseDnVecDescr_t X_1;
+    CUSPARSE_CHECK(cusparseCreateDnVec(&X_1, n, d_X, CUDA_R_32F));
+
+    constexpr float alpha = -1;
+    constexpr float beta = 1;
+
+    void *buffer = nullptr;
+    size_t buffer_size = 0;
+    CUSPARSE_CHECK(cusparseSpMV_bufferSize(
+        cusparseH, CUSPARSE_OPERATION_NON_TRANSPOSE,
+        &alpha, A, X_1, &beta, residual,
+        CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, &buffer_size));
+
+    if (buffer_size > 0)
+    {
+        CUDA_CHECK(cudaMalloc(&buffer, buffer_size));
+    }
+
+    CUSPARSE_CHECK(cusparseSpMV(
+        cusparseH, CUSPARSE_OPERATION_NON_TRANSPOSE,
+        &alpha, A, X_1, &beta, residual,
+        CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, buffer));
+
+    if (buffer)
+    {
+        CUDA_CHECK(cudaFree(buffer));
+    }
+
+    CUSPARSE_CHECK(cusparseDestroyDnVec(X_1));
 }
 
 void dr_bcg::get_w_zeta(
