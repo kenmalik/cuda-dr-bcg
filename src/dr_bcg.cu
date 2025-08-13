@@ -634,7 +634,7 @@ cusolverStatus_t dr_bcg::dr_bcg(
         ++i;
 
         // xi = (s' * A * s)^-1
-        get_xi(cusolverH, cusolverParams, cusparseH, A, n, s, d);
+        get_xi(cublasH, cusolverH, cusolverParams, cusparseH, A, n, s, d);
 
         // X = X + s * xi * sigma
         get_next_X(cublasH, n, s, d.s, d.xi, d.temp, d.sigma, d_X);
@@ -723,6 +723,7 @@ void dr_bcg::get_R(
 }
 
 void dr_bcg::get_xi(
+    cublasHandle_t &cublasH,
     cusolverDnHandle_t &cusolverH,
     cusolverDnParams_t &cusolverParams,
     cusparseHandle_t &cusparseH,
@@ -733,33 +734,69 @@ void dr_bcg::get_xi(
 {
     NVTX3_FUNC_RANGE();
 
-    std::cerr << "TODO: implement get_xi" << std::endl;
+    cusparseDnMatDescr_t s_descr;
+    CUSPARSE_CHECK(cusparseCreateDnMat(&s_descr, n, s, n, reinterpret_cast<void *>(d.s), CUDA_R_32F, CUSPARSE_ORDER_COL));
 
-    quadratic_form(cusparseH, n, s, d.s, A, d.temp, d.xi);
-    // invert_square_matrix(cusolverH, cusolverParams, d.xi, n);
+    quadratic_form(cublasH, cusparseH, n, s, s_descr, A, d.temp, d.xi);
+    invert_square_matrix(cusolverH, cusolverParams, d.xi, s);
 }
 
 void dr_bcg::quadratic_form(
+    cublasHandle_t &cublasH,
     cusparseHandle_t &cusparseH,
     const int n,
     const int s,
-    const float *d_x,
+    cusparseDnMatDescr_t &X,
     cusparseSpMatDescr_t &A,
     float *d_work,
     float *d_y)
 {
     NVTX3_FUNC_RANGE();
 
-    std::cerr << "TODO: implement quadratic_form" << std::endl;
+    constexpr float alpha = 1;
+    constexpr float beta = 0;
 
-    // constexpr float alpha = 1;
-    // constexpr float beta = 0;
-    //     CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_T, CUBLAS_OP_N, n, m, m,
-    //                                 &alpha, d_x, m, d_A, m,
-    //                                 &beta, d_work, n));
-    //     CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, n, m,
-    //                                 &alpha, d_work, n, d_x, m,
-    //                                 &beta, d_y, n));
+    constexpr cusparseOperation_t X_transpose = CUSPARSE_OPERATION_TRANSPOSE;
+    constexpr cusparseOperation_t A_transpose = CUSPARSE_OPERATION_NON_TRANSPOSE;
+    constexpr cudaDataType compute_type = CUDA_R_32F;
+    constexpr cusparseSpMMAlg_t algorithm_type = CUSPARSE_SPMM_ALG_DEFAULT;
+
+    // Ax
+    cusparseDnMatDescr_t work_descr;
+    CUSPARSE_CHECK(cusparseCreateDnMat(&work_descr, n, s, n, reinterpret_cast<void *>(d_work), CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+    void *buffer = nullptr;
+    size_t buffer_size = 0;
+    CUSPARSE_CHECK(cusparseSpMM_bufferSize(
+        cusparseH, X_transpose, A_transpose,
+        &alpha, A, X, &beta, work_descr,
+        compute_type, algorithm_type, &buffer_size));
+
+    if (buffer_size > 0)
+    {
+        CUDA_CHECK(cudaMalloc(&buffer, buffer_size));
+    }
+
+    CUSPARSE_CHECK(cusparseSpMM(
+        cusparseH, X_transpose, A_transpose,
+        &alpha, A, X, &beta, work_descr,
+        compute_type, algorithm_type, buffer));
+
+    if (buffer)
+    {
+        CUDA_CHECK(cudaFree(buffer));
+    }
+
+    CUSPARSE_CHECK(cusparseDestroyDnMat(work_descr));
+
+    // x^TAx
+    float *d_X = nullptr;
+    CUSPARSE_CHECK(cusparseDnMatGetValues(X, reinterpret_cast<void **>(&d_X)));
+
+    CUBLAS_CHECK(cublasSgemm_v2(
+        cublasH, CUBLAS_OP_T, CUBLAS_OP_N, s, s, n,
+        &alpha, d_X, n, d_work, n,
+        &beta, d_y, s));
 }
 
 void dr_bcg::residual(

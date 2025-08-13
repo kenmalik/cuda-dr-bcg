@@ -48,6 +48,7 @@ namespace dr_bcg
         const int m, const int n, DeviceBuffer &d, const float *d_A);
 
     void get_xi(
+        cublasHandle_t &cublasH,
         cusolverDnHandle_t &cusolverH,
         cusolverDnParams_t &cusolverParams,
         cusparseHandle_t &cusparseH,
@@ -87,10 +88,11 @@ namespace dr_bcg
     void quadratic_form(cublasHandle_t &cublasH, const int m, const int n, const float *d_s, const float *d_A, float *d_work, float *d_y);
 
     void quadratic_form(
+        cublasHandle_t &cublasH,
         cusparseHandle_t &cusparseH,
         const int n,
         const int s,
-        const float *d_x,
+        cusparseDnMatDescr_t &X,
         cusparseSpMatDescr_t &A,
         float *d_work,
         float *d_y);
