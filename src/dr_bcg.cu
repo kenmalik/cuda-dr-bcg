@@ -853,32 +853,59 @@ void dr_bcg::get_w_zeta(
     cusolverDnParams_t &cusolverParams,
     cublasHandle_t &cublasH,
     cusparseHandle_t &cusparseH,
-    const int m,
     const int n,
+    const int s,
     DeviceBuffer &d,
     cusparseSpMatDescr_t &A)
 {
     NVTX3_FUNC_RANGE();
 
-    std::cerr << "TODO: implement get_w_zeta" << std::endl;
+    constexpr cusparseOperation_t transpose = CUSPARSE_OPERATION_NON_TRANSPOSE;
+    constexpr cudaDataType compute_type = CUDA_R_32F;
+    constexpr cusparseSpMMAlg_t mm_type = CUSPARSE_SPMM_ALG_DEFAULT;
 
-    //     // temp = A * s
-    //     constexpr float alpha_1 = 1;
-    //     constexpr float beta_1 = 0;
-    //     CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, m,
-    //                                 &alpha_1, d_A, m, d.s, m,
-    //                                 &beta_1, d.temp, m));
+    void *buffer = nullptr;
+    size_t buffer_size = 0;
 
-    //     // w - temp * xi
-    //     constexpr float alpha_2 = -1;
-    //     constexpr float beta_2 = 1;
-    //     CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, n,
-    //                                 &alpha_2, d.temp, m, d.xi, n,
-    //                                 &beta_2, d.w, m));
+    cusparseDnMatDescr_t s_desc;
+    CUSPARSE_CHECK(cusparseCreateDnMat(&s_desc, n, s, n, d.s, CUDA_R_32F, CUSPARSE_ORDER_COL));
 
-    // #ifdef USE_THIN_QR
-    //     thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.zeta, m, n, d.w);
-    // #else
-    //     qr_factorization(cusolverH, cusolverParams, d.w, d.zeta, m, n, d.w);
-    // #endif
+    cusparseDnMatDescr_t work;
+    CUSPARSE_CHECK(cusparseCreateDnMat(&work, n, s, n, d.temp, CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+    // temp = A * s
+    constexpr float alpha_1 = 1;
+    constexpr float beta_1 = 0;
+    CUSPARSE_CHECK(cusparseSpMM_bufferSize(
+        cusparseH, transpose, transpose,
+        &alpha_1, A, s_desc, &beta_1, work,
+        compute_type, mm_type, &buffer_size));
+
+    if (buffer_size > 0)
+    {
+        CUDA_CHECK(cudaMalloc(&buffer, buffer_size));
+    }
+
+    CUSPARSE_CHECK(cusparseSpMM(
+        cusparseH, transpose, transpose,
+        &alpha_1, A, s_desc, &beta_1, work,
+        compute_type, mm_type, buffer));
+
+    if (buffer)
+    {
+        CUDA_CHECK(cudaFree(buffer));
+    }
+
+    // w - temp * xi
+    constexpr float alpha_2 = -1;
+    constexpr float beta_2 = 1;
+    CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, s, s,
+                                &alpha_2, d.temp, n, d.xi, s,
+                                &beta_2, d.w, n));
+
+#ifdef USE_THIN_QR
+    thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.zeta, n, s, d.w);
+#else
+    qr_factorization(cusolverH, cusolverParams, d.w, d.zeta, n, s, d.w);
+#endif
 }
