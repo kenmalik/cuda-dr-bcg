@@ -133,7 +133,7 @@ cusolverStatus_t dr_bcg::dr_bcg(
     *iterations = 0;
     while (*iterations < max_iterations)
     {
-        nvtx3::scoped_range loop{"iteration_" + std::to_string(*iterations)};
+        nvtx3::scoped_range loop{"iteration"};
 
         (*iterations)++;
 
@@ -173,12 +173,16 @@ void dr_bcg::get_xi(
     cusolverDnHandle_t &cusolverH, cusolverDnParams_t &cusolverParams, cublasHandle_t &cublasH,
     const int m, const int n, DeviceBuffer &d, const float *d_A)
 {
+    NVTX3_FUNC_RANGE();
+
     quadratic_form(cublasH, m, n, d.s, d_A, d.temp, d.xi);
     invert_square_matrix(cusolverH, cusolverParams, d.xi, n);
 }
 
 void dr_bcg::get_sigma(cublasHandle_t cublasH, int n, DeviceBuffer &d)
 {
+    NVTX3_FUNC_RANGE();
+
     // sigma = zeta * sigma
     constexpr float sgemm_alpha = 1;
     constexpr float sgemm_beta = 0;
@@ -190,6 +194,8 @@ void dr_bcg::get_sigma(cublasHandle_t cublasH, int n, DeviceBuffer &d)
 
 void dr_bcg::get_s(cublasHandle_t cublasH, const int m, const int n, DeviceBuffer &d)
 {
+    NVTX3_FUNC_RANGE();
+
     // temp = s * zeta'
     constexpr float strmm_alpha = 1;
     CUBLAS_CHECK(cublasStrmm_v2(cublasH, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER,
@@ -242,6 +248,8 @@ void dr_bcg::get_w_zeta(
  */
 void dr_bcg::residual(cublasHandle_t &cublasH, float *d_residual, const float *B, const int m, const float *d_A, const float *d_X)
 {
+    NVTX3_FUNC_RANGE();
+
     CUDA_CHECK(cudaMemcpy(d_residual, B, sizeof(float) * m, cudaMemcpyDeviceToDevice));
 
     constexpr float alpha = -1;
@@ -266,6 +274,8 @@ void dr_bcg::residual(cublasHandle_t &cublasH, float *d_residual, const float *B
  */
 void dr_bcg::get_next_X(cublasHandle_t &cublasH, const int m, const int n, const float *d_s, const float *d_xi, float *d_temp, const float *d_sigma, float *d_X)
 {
+    NVTX3_FUNC_RANGE();
+
     constexpr float alpha = 1;
     constexpr float beta = 1;
     CUBLAS_CHECK(cublasStrmm_v2(cublasH, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT,
@@ -290,6 +300,8 @@ void dr_bcg::quadratic_form(cublasHandle_t &cublasH, const int m, const int n,
                             const float *d_x, const float *d_A,
                             float *d_work, float *d_y)
 {
+    NVTX3_FUNC_RANGE();
+
     constexpr float alpha = 1;
     constexpr float beta = 0;
     CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_T, CUBLAS_OP_N, n, m, m,
@@ -313,6 +325,8 @@ void dr_bcg::quadratic_form(cublasHandle_t &cublasH, const int m, const int n,
  */
 void dr_bcg::get_R(cublasHandle_t &cublasH, float *R, const int m, const int n, const float *A, const float *X, const float *B)
 {
+    NVTX3_FUNC_RANGE();
+
     constexpr float alpha = -1;
     constexpr float beta = 1;
 
@@ -445,6 +459,8 @@ void dr_bcg::thin_qr(
     const int n,
     const float *A)
 {
+    NVTX3_FUNC_RANGE();
+
     // H = M^T * M
     float *d_H = nullptr;
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_H), sizeof(float) * n * n));
