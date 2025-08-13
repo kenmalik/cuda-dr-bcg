@@ -680,17 +680,46 @@ void dr_bcg::get_R(
 {
     NVTX3_FUNC_RANGE();
 
-    std::cerr << "TODO: implement get_R" << std::endl;
+    constexpr float alpha = -1;
+    constexpr float beta = 1;
 
-    // constexpr float alpha = -1;
-    // constexpr float beta = 1;
+    float *d_R = nullptr;
+    int64_t n = 0;
+    int64_t s = 0;
+    int64_t ld = 0;
+    cudaDataType type;
+    cusparseOrder_t order;
+    CUSPARSE_CHECK(cusparseDnMatGet(R, &n, &s, &ld, reinterpret_cast<void **>(&d_R), &type, &order));
+    float *d_B = nullptr;
+    CUSPARSE_CHECK(cusparseDnMatGetValues(B, reinterpret_cast<void **>(&d_B)));
 
-    // CUDA_CHECK(cudaMemcpy(R, B, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
+    CUDA_CHECK(cudaMemcpy(d_R, d_B, sizeof(float) * n * s, cudaMemcpyDeviceToDevice));
 
-    // CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N,
-    //                             m, n, m,
-    //                             &alpha, A, m, X, m,
-    //                             &beta, R, m));
+    constexpr cusparseOperation_t transpose = CUSPARSE_OPERATION_NON_TRANSPOSE;
+    constexpr cudaDataType compute_type = CUDA_R_32F;
+    constexpr cusparseSpMMAlg_t algorithm_type = CUSPARSE_SPMM_ALG_DEFAULT;
+
+    void *buffer = nullptr;
+    size_t buffer_size = 0;
+    CUSPARSE_CHECK(cusparseSpMM_bufferSize(
+        cusparseH, transpose, transpose,
+        &alpha, A, X, &beta, R,
+        compute_type, algorithm_type, &buffer_size));
+
+    if (buffer_size > 0)
+    {
+        CUDA_CHECK(cudaMalloc(&buffer, buffer_size));
+    }
+
+    CUSPARSE_CHECK(cusparseSpMM(
+        cusparseH, transpose, transpose,
+        &alpha, A, X, &beta, R,
+        compute_type, algorithm_type, buffer));
+
+    if (buffer)
+    {
+        CUDA_CHECK(cudaFree(buffer));
+    }
 }
 
 void dr_bcg::get_xi(
@@ -723,8 +752,8 @@ void dr_bcg::quadratic_form(
 
     std::cerr << "TODO: implement quadratic_form" << std::endl;
 
-    constexpr float alpha = 1;
-    constexpr float beta = 0;
+    // constexpr float alpha = 1;
+    // constexpr float beta = 0;
     //     CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_T, CUBLAS_OP_N, n, m, m,
     //                                 &alpha, d_x, m, d_A, m,
     //                                 &beta, d_work, n));
