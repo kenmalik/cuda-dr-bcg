@@ -39,6 +39,17 @@
         }                                                                            \
     } while (0)
 
+#define CUSPARSE_CHECK(err)                                                            \
+    do                                                                                 \
+    {                                                                                  \
+        cusparseStatus_t err_ = (err);                                                 \
+        if (err_ != CUSPARSE_STATUS_SUCCESS)                                           \
+        {                                                                              \
+            fprintf(stderr, "cusparse error %d at %s:%d\n", err_, __FILE__, __LINE__); \
+            throw std::runtime_error("cusparse error");                                \
+        }                                                                              \
+    } while (0)
+
 void fill_random(float *mat, const int rows, const int cols, const std::optional<int> seed = std::nullopt);
 
 void fill_spd(float *mat, const int n, const std::optional<int> seed = std::nullopt);

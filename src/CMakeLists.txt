@@ -20,6 +20,7 @@ target_link_libraries(
     dr_bcg PUBLIC
     CUDA::cublas
     CUDA::cusolver
+    CUDA::cusparse
     nvtx3-cpp
 )
 
