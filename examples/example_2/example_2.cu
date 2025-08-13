@@ -2,18 +2,20 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <cmath>
+#include <limits>
 
 #include <suitesparse_matrix.h>
 
 #include "dr_bcg/dr_bcg.h"
 #include "dr_bcg/helper.h"
 
-__global__ void set_val(float *d_A, float val, size_t num_elements)
+__global__ void set_val(float *A_d, float val, size_t num_elements)
 {
     const int idx = blockIdx.x * blockDim.y + threadIdx.x;
     if (idx < num_elements)
     {
-        d_A[idx] = val;
+        A_d[idx] = val;
     }
 }
 
@@ -84,7 +86,7 @@ int main(int argc, char *argv[])
         CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
 
     const int n = ssm.rows();
-    const int s = 8;
+    const int s = 1;
 
     cusparseDnMatDescr_t X;
     float *d_X = nullptr;
@@ -102,14 +104,107 @@ int main(int argc, char *argv[])
 
     CUSPARSE_CHECK(cusparseCreateDnMat(&B, n, s, n, d_B, CUDA_R_32F, CUSPARSE_ORDER_COL));
 
-    constexpr float tolerance = 0.1;
-    constexpr int max_iterations = 1000;
+    constexpr float tolerance = std::numeric_limits<float>::epsilon();
+    constexpr int max_iterations = 100000;
 
     int iterations = 0;
     std::cout << "Running" << std::endl;
     dr_bcg::dr_bcg(cusolverH, cusolverP, cublasH, cusparseH, A, X, B, tolerance, max_iterations, &iterations);
 
+    // Verification
+    cusparseDnMatDescr_t B_check;
+    float *B_check_d = nullptr;
+    CUDA_CHECK(cudaMalloc(&B_check_d, sizeof(float) * n * s));
+    CUSPARSE_CHECK(cusparseCreateDnMat(&B_check, n, s, n, B_check_d, CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+    constexpr cusparseOperation_t transpose = CUSPARSE_OPERATION_NON_TRANSPOSE;
+    constexpr float alpha = 1;
+    constexpr float beta = 0;
+
+    void *buffer = nullptr;
+    size_t buffer_size = 0;
+
+    CUSPARSE_CHECK(cusparseSpMM_bufferSize(
+        cusparseH, transpose, transpose,
+        &alpha, A, X, &beta, B_check,
+        CUDA_R_32F, CUSPARSE_SPMM_ALG_DEFAULT, &buffer_size));
+
+    if (buffer_size > 0)
+    {
+        CUDA_CHECK(cudaMalloc(&buffer, buffer_size));
+    }
+
+    CUSPARSE_CHECK(cusparseSpMM(
+        cusparseH, transpose, transpose,
+        &alpha, A, X, &beta, B_check,
+        CUDA_R_32F, CUSPARSE_SPMM_ALG_DEFAULT, buffer));
+
+    if (buffer)
+    {
+        CUDA_CHECK(cudaFree(buffer));
+    }
+
+    std::vector<float> B_expected(n * s, 1);
+    std::vector<float> B_got(n * s);
+    CUDA_CHECK(cudaMemcpy(B_got.data(), B_check_d, sizeof(float) * B_got.size(), cudaMemcpyDeviceToHost));
+
+    constexpr float check_tolerance = 0.001;
+    float min_error = std::numeric_limits<float>::max();
+    float max_error = 0;
+    float avg_error = 0;
+
+    int bad_count = 0;
+    int good_count = 0;
+    for (int i = 0; i < B_expected.size(); ++i)
+    {
+        const float error = std::abs(B_expected.at(i) - B_got.at(i));
+        if (error < min_error)
+        {
+            min_error = error;
+        }
+        if (error > max_error)
+        {
+            max_error = error;
+        }
+        avg_error += error;
+
+        if (error > check_tolerance)
+        {
+            ++bad_count;
+        }
+        else
+        {
+            ++good_count;
+        }
+    }
+
     std::cout << "Iterations: " << iterations << std::endl;
+
+    std::cout << "\nWith check_tolerance=" << check_tolerance << ':' << std::endl;
+    std::cout << "  Good values: " << good_count << std::endl;
+    std::cout << "  Bad values: " << bad_count << std::endl;
+
+    std::cout << "\nSummary:" << std::endl;
+    std::cout << "  min_error=" << min_error << std::endl;
+    std::cout << "  max_error=" << max_error << std::endl;
+    std::cout << "  avg_error=" << avg_error / B_expected.size() << std::endl;
+
+    CUDA_CHECK(cudaFree(B_check_d));
+    CUDA_CHECK(cudaFree(jc_d));
+    CUDA_CHECK(cudaFree(ir_d));
+    CUDA_CHECK(cudaFree(vals_d));
+    CUDA_CHECK(cudaFree(x_d));
+    CUDA_CHECK(cudaFree(b_d));
+
+    CUSPARSE_CHECK(cusparseDestroySpMat(A));
+    CUSPARSE_CHECK(cusparseDestroyDnMat(X));
+    CUSPARSE_CHECK(cusparseDestroyDnMat(B));
+    CUSPARSE_CHECK(cusparseDestroyDnMat(B_check));
+
+    CUSPARSE_CHECK(cusparseDestroy(cusparseH));
+    CUBLAS_CHECK(cublasDestroy_v2(cublasH));
+    CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
+    CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverP));
 
     return 0;
 }
