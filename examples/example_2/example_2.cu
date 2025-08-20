@@ -21,9 +21,25 @@ __global__ void set_val(float *A_d, float val, size_t num_elements)
 
 int main(int argc, char *argv[])
 {
-    if (argc != 2)
+    int s;
+    try
     {
-        std::cerr << "Usage: ./example_2 [.mat file]" << std::endl;
+        if (argc == 2)
+        {
+            s = 1;
+        }
+        else if (argc == 3)
+        {
+            s = std::atoi(argv[2]);
+        }
+        else
+        {
+            throw std::invalid_argument("Invalid arg count");
+        }
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "Usage: ./example_2 [.mat file] [block size]" << std::endl;
         return 1;
     }
 
@@ -86,7 +102,6 @@ int main(int argc, char *argv[])
         CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
 
     const int n = ssm.rows();
-    const int s = 1;
 
     cusparseDnMatDescr_t X;
     float *d_X = nullptr;
@@ -105,11 +120,15 @@ int main(int argc, char *argv[])
     CUSPARSE_CHECK(cusparseCreateDnMat(&B, n, s, n, d_B, CUDA_R_32F, CUSPARSE_ORDER_COL));
 
     constexpr float tolerance = std::numeric_limits<float>::epsilon();
-    constexpr int max_iterations = 100000;
+    constexpr int max_iterations = 10000;
 
+    std::cout << "n: " << n << std::endl;
+    std::cout << "s: " << s << std::endl;
+
+    std::cerr << "Running..." << std::endl;
     int iterations = 0;
-    std::cout << "Running" << std::endl;
     dr_bcg::dr_bcg(cusolverH, cusolverP, cublasH, cusparseH, A, X, B, tolerance, max_iterations, &iterations);
+    std::cerr << "Finished!" << std::endl;
 
     // Verification
     cusparseDnMatDescr_t B_check;
