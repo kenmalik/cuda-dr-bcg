@@ -737,8 +737,15 @@ void dr_bcg::get_xi(
     cusparseDnMatDescr_t s_descr;
     CUSPARSE_CHECK(cusparseCreateDnMat(&s_descr, n, s, n, reinterpret_cast<void *>(d.s), CUDA_R_32F, CUSPARSE_ORDER_COL));
 
-    quadratic_form(cublasH, cusparseH, n, s, s_descr, A, d.temp, d.xi);
-    invert_square_matrix(cusolverH, cusolverParams, d.xi, s);
+    {
+        nvtx3::scoped_range quadform{"get_xi.quadratic_form"};
+        quadratic_form(cublasH, cusparseH, n, s, s_descr, A, d.temp, d.xi);
+    }
+
+    {
+        nvtx3::scoped_range invert{"get_xi.invert_square_matrix"};
+        invert_square_matrix(cusolverH, cusolverParams, d.xi, s);
+    }
 }
 
 void dr_bcg::quadratic_form(
@@ -873,39 +880,48 @@ void dr_bcg::get_w_zeta(
     cusparseDnMatDescr_t work;
     CUSPARSE_CHECK(cusparseCreateDnMat(&work, n, s, n, d.temp, CUDA_R_32F, CUSPARSE_ORDER_COL));
 
-    // temp = A * s
-    constexpr float alpha_1 = 1;
-    constexpr float beta_1 = 0;
-    CUSPARSE_CHECK(cusparseSpMM_bufferSize(
-        cusparseH, transpose, transpose,
-        &alpha_1, A, s_desc, &beta_1, work,
-        compute_type, mm_type, &buffer_size));
-
-    if (buffer_size > 0)
     {
-        CUDA_CHECK(cudaMalloc(&buffer, buffer_size));
+        // temp = A * s
+        nvtx3::scoped_range SpMM{"get_w_zeta.SpMM"};
+        constexpr float alpha_1 = 1;
+        constexpr float beta_1 = 0;
+        CUSPARSE_CHECK(cusparseSpMM_bufferSize(
+            cusparseH, transpose, transpose,
+            &alpha_1, A, s_desc, &beta_1, work,
+            compute_type, mm_type, &buffer_size));
+
+        if (buffer_size > 0)
+        {
+            CUDA_CHECK(cudaMalloc(&buffer, buffer_size));
+        }
+
+        CUSPARSE_CHECK(cusparseSpMM(
+            cusparseH, transpose, transpose,
+            &alpha_1, A, s_desc, &beta_1, work,
+            compute_type, mm_type, buffer));
+
+        if (buffer)
+        {
+            CUDA_CHECK(cudaFree(buffer));
+        }
     }
 
-    CUSPARSE_CHECK(cusparseSpMM(
-        cusparseH, transpose, transpose,
-        &alpha_1, A, s_desc, &beta_1, work,
-        compute_type, mm_type, buffer));
-
-    if (buffer)
     {
-        CUDA_CHECK(cudaFree(buffer));
+        nvtx3::scoped_range Sgemm{"get_w_zeta.Sgemm"};
+        // w - temp * xi
+        constexpr float alpha_2 = -1;
+        constexpr float beta_2 = 1;
+        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, s, s,
+                                    &alpha_2, d.temp, n, d.xi, s,
+                                    &beta_2, d.w, n));
     }
 
-    // w - temp * xi
-    constexpr float alpha_2 = -1;
-    constexpr float beta_2 = 1;
-    CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, s, s,
-                                &alpha_2, d.temp, n, d.xi, s,
-                                &beta_2, d.w, n));
-
+    {
+        nvtx3::scoped_range factorization{"get_w_zeta.factorization"};
 #ifdef USE_THIN_QR
-    thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.zeta, n, s, d.w);
+        thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.zeta, n, s, d.w);
 #else
-    qr_factorization(cusolverH, cusolverParams, d.w, d.zeta, n, s, d.w);
+        qr_factorization(cusolverH, cusolverParams, d.w, d.zeta, n, s, d.w);
 #endif
+    }
 }
