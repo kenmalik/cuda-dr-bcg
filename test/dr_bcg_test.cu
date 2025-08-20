@@ -246,7 +246,7 @@ TEST(InvertSquareMatrix, OutputCorrect)
     CUDA_CHECK(cudaMemcpy(d_A_inv, h_A_in.data(), sizeof(float) * h_A_in.size(), cudaMemcpyHostToDevice));
 
     // Operation
-    dr_bcg::invert_square_matrix(cusolverH, cusolverParams, d_A, m);
+    invert_square_matrix(cusolverH, cusolverParams, d_A, m);
 
     // Test A * A_inv = I
     constexpr float alpha = 1;
@@ -379,7 +379,7 @@ TEST(CopyUpperTriangular, OutputCorrect)
     float *d_copy = nullptr;
     CUDA_CHECK(cudaMalloc(&d_copy, sizeof(float) * copy_got.size()));
 
-    dr_bcg::copy_upper_triangular(d_copy, d_A, m, n);
+    copy_upper_triangular(d_copy, d_A, m, n);
 
     CUDA_CHECK(cudaMemcpy(copy_got.data(), d_copy, sizeof(float) * copy_got.size(), cudaMemcpyDeviceToHost));
 

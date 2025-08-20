@@ -29,6 +29,41 @@ function [X_final, iterations] = DR_BCG(A, B, X, tol, maxit)
 end
 ```
 
+## Building
+
+To simply build the library, run the following commands from the root directory:
+
+```bash
+cmake -B build -S .
+cmake --build build
+```
+
+### Options
+
+You can pass options when building the project for additional/altered functionality.
+
+The following options adjust the behavior of the DR-BCG algorithm. These are off by default:
+
+- `DR_BCG_USE_TENSOR_CORES`: enable TF32 calculation using Tensor Cores.
+- `DR_BCG_USE_THIN_QR`: use Thin QR procedure rather than cuSOLVER's standard QR procedure for the factorization portions of DR-BCG.
+
+The following options build additional portions of the project. These are off by default:
+
+- `DR_BCG_BUILD_BENCHMARKS`
+- `DR_BCG_BUILD_EXAMPLES`
+- `DR_BCG_BUILD_TESTS`
+
+You can pass these when building the project. For example:
+
+```bash
+cmake -B build -S . -DDR_BCG_BUILD_EXAMPLES=ON -DDR_BCG_USE_TENSOR_CORES=ON
+cmake --build build
+```
+
+## Running Examples
+
+See [here](examples/README.md) for directions on building and running examples.
+
 ## Usage
 
 The library currently provides two interfaces for the algorithm (the core solving portion is the same under the hood).
@@ -74,30 +109,6 @@ cusolverStatus_t dr_bcg(
 ```
 
 See the convenience wrapper implementation for an example of how to call this interface.
-
-## Running Examples
-
-To build the examples, provide the following flags to CMake:
-
-```bash
-cmake -B build -S . -DDR_BCG_BUILD_EXAMPLES=ON
-```
-
-After building, this will add an additional `examples` subdirectory under `build` containing executables for each example.
-
-### On SLURM
-
-This library was initially developed on a system running SLURM and hence contains some conveniences for running examples.
-
-The Makefile in the root directory contains a target `run` which will run a SLURM script using `srun`.
-The Makefile requires you to define an environment variable which defines the account you will run the script on.
-
-Run the example like so, replacing `my-acct-num` with your account identifier:
-
-```bash
-export ACCOUNT=my-acct-num
-make run
-```
 
 ## Building Tests and Benchmarks
 

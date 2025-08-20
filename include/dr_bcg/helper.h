@@ -1,7 +1,10 @@
 #pragma once
 
+#include <optional>
 #include <stdexcept>
 #include <vector>
+#include <random>
+#include <cusolverDn.h>
 
 #define CUDA_CHECK(err)                                                            \
     do                                                                             \
@@ -36,9 +39,20 @@
         }                                                                            \
     } while (0)
 
-void fill_random(float *mat, const int rows, const int cols);
+#define CUSPARSE_CHECK(err)                                                            \
+    do                                                                                 \
+    {                                                                                  \
+        cusparseStatus_t err_ = (err);                                                 \
+        if (err_ != CUSPARSE_STATUS_SUCCESS)                                           \
+        {                                                                              \
+            fprintf(stderr, "cusparse error %d at %s:%d\n", err_, __FILE__, __LINE__); \
+            throw std::runtime_error("cusparse error");                                \
+        }                                                                              \
+    } while (0)
 
-void fill_spd(float *mat, const int n);
+void fill_random(float *mat, const int rows, const int cols, const std::optional<int> seed = std::nullopt);
+
+void fill_spd(float *mat, const int n, const std::optional<int> seed = std::nullopt);
 
 void print_matrix(const float *mat, const int rows, const int cols);
 
@@ -47,3 +61,7 @@ void print_device_matrix(const float *d_mat, const int rows, const int cols);
 void check_nan(const float *d_arr, size_t size, std::string step);
 
 std::vector<double> read_matrix_bin(std::string filename);
+
+void copy_upper_triangular(float *dst, float *src, const int m, const int n);
+
+void invert_square_matrix(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *A, const int n);
