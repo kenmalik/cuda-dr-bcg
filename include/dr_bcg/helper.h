@@ -1,54 +1,22 @@
 #pragma once
 
 #include <optional>
-#include <stdexcept>
 #include <vector>
-#include <random>
+#include <string>
+
 #include <cusolverDn.h>
+#include <cublas_v2.h>
+#include <cusparse_v2.h>
 
-#define CUDA_CHECK(err)                                                            \
-    do                                                                             \
-    {                                                                              \
-        cudaError_t err_ = (err);                                                  \
-        if (err_ != cudaSuccess)                                                   \
-        {                                                                          \
-            fprintf(stderr, "CUDA error %d at %s:%d\n", err_, __FILE__, __LINE__); \
-            throw std::runtime_error("CUDA error");                                \
-        }                                                                          \
-    } while (0)
+#define CUDA_CHECK(val) check((val), #val, __FILE__, __LINE__);
+#define CUSOLVER_CHECK(val) check((val), #val, __FILE__, __LINE__);
+#define CUBLAS_CHECK(val) check((val), #val, __FILE__, __LINE__);
+#define CUSPARSE_CHECK(val) check((val), #val, __FILE__, __LINE__);
 
-#define CUSOLVER_CHECK(err)                                                            \
-    do                                                                                 \
-    {                                                                                  \
-        cusolverStatus_t err_ = (err);                                                 \
-        if (err_ != CUSOLVER_STATUS_SUCCESS)                                           \
-        {                                                                              \
-            fprintf(stderr, "cusolver error %d at %s:%d\n", err_, __FILE__, __LINE__); \
-            throw std::runtime_error("cusolver error");                                \
-        }                                                                              \
-    } while (0)
-
-#define CUBLAS_CHECK(err)                                                            \
-    do                                                                               \
-    {                                                                                \
-        cublasStatus_t err_ = (err);                                                 \
-        if (err_ != CUBLAS_STATUS_SUCCESS)                                           \
-        {                                                                            \
-            fprintf(stderr, "cublas error %d at %s:%d\n", err_, __FILE__, __LINE__); \
-            throw std::runtime_error("cublas error");                                \
-        }                                                                            \
-    } while (0)
-
-#define CUSPARSE_CHECK(err)                                                            \
-    do                                                                                 \
-    {                                                                                  \
-        cusparseStatus_t err_ = (err);                                                 \
-        if (err_ != CUSPARSE_STATUS_SUCCESS)                                           \
-        {                                                                              \
-            fprintf(stderr, "cusparse error %d at %s:%d\n", err_, __FILE__, __LINE__); \
-            throw std::runtime_error("cusparse error");                                \
-        }                                                                              \
-    } while (0)
+void check(cudaError_t err, const char *const func, const char *const file, const int line);
+void check(cusolverStatus_t err, const char *const func, const char *const file, const int line);
+void check(cublasStatus_t err, const char *const func, const char *const file, const int line);
+void check(cusparseStatus_t err, const char *const func, const char *const file, const int line);
 
 void fill_random(float *mat, const int rows, const int cols, const std::optional<int> seed = std::nullopt);
 

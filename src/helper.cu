@@ -1,7 +1,99 @@
+#include <random>
 #include <iostream>
+#include <sstream>
 #include <fstream>
+
 #include <cublas_v2.h>
+
 #include "dr_bcg/helper.h"
+
+/**
+ * @brief Checks CUDA runtime API results and throws an exception on error.
+ *
+ * @param err CUDA error code returned by a CUDA runtime API call.
+ * @param func Name of the function where the check is performed.
+ * @param file Source file name where the check is performed.
+ * @param line Line number in the source file where the check is performed.
+ *
+ * @throws std::runtime_error if the CUDA error code is not cudaSuccess.
+ */
+void check(cudaError_t err, const char *const func, const char *const file, const int line)
+{
+    if (err != cudaSuccess)
+    {
+        std::ostringstream oss;
+        oss << "CUDA error " << err
+            << " at " << file << " line " << line
+            << ": " << func << ": " << cudaGetErrorString(err);
+        throw std::runtime_error(oss.str());
+    }
+}
+
+/**
+ * @brief Checks cuSOLVER API results and throws an exception on error.
+ *
+ * @param err CUDA error code returned by a CUDA runtime API call.
+ * @param func Name of the function where the check is performed.
+ * @param file Source file name where the check is performed.
+ * @param line Line number in the source file where the check is performed.
+ *
+ * @throws std::runtime_error if the cuSOLVER error code is not CUSOLVER_STATUS_SUCCESS.
+ */
+void check(cusolverStatus_t err, const char *const func, const char *const file, const int line)
+{
+    if (err != CUSOLVER_STATUS_SUCCESS)
+    {
+        std::ostringstream oss;
+        oss << "cuSOLVER error " << err
+            << " at " << file << " line " << line
+            << ": " << func;
+        throw std::runtime_error(oss.str());
+    }
+}
+
+/**
+ * @brief Checks cuBLAS API results and throws an exception on error.
+ *
+ * @param err cuBLAS error code returned by a cuBLAS API call.
+ * @param func Name of the function where the check is performed.
+ * @param file Source file name where the check is performed.
+ * @param line Line number in the source file where the check is performed.
+ *
+ * @throws std::runtime_error if the cuBLAS error code is not CUBLAS_STATUS_SUCCESS.
+ */
+void check(cublasStatus_t err, const char *const func, const char *const file, const int line)
+{
+    if (err != CUBLAS_STATUS_SUCCESS)
+    {
+        std::ostringstream oss;
+        oss << "cuBLAS error " << err
+            << " at " << file << " line " << line
+            << ": " << func;
+        throw std::runtime_error(oss.str());
+    }
+}
+
+/**
+ * @brief Checks cuSPARSE API results and throws an exception on error.
+ *
+ * @param err cuSPARSE error code returned by a cuSPARSE API call.
+ * @param func Name of the function where the check is performed.
+ * @param file Source file name where the check is performed.
+ * @param line Line number in the source file where the check is performed.
+ *
+ * @throws std::runtime_error if the cuSPARSE error code is not CUSPARSE_STATUS_SUCCESS.
+ */
+void check(cusparseStatus_t err, const char *const func, const char *const file, const int line)
+{
+    if (err != CUSPARSE_STATUS_SUCCESS)
+    {
+        std::ostringstream oss;
+        oss << "cuSPARSE error " << err
+            << " at " << file << " line " << line
+            << ": " << func << ": " << cusparseGetErrorString(err);
+        throw std::runtime_error(oss.str());
+    }
+}
 
 /**
  * @brief Prints a matrix stored in column-major order.
