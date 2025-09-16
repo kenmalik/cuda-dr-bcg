@@ -1,3 +1,3 @@
-add_subdirectory("example_0")
-add_subdirectory("example_1")
-add_subdirectory("example_2")
+add_subdirectory("1_random_data")
+add_subdirectory("2_read_bin_file")
+add_subdirectory("3_read_mat_file")
