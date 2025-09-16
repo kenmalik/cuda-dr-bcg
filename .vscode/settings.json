@@ -2,6 +2,10 @@
     "files.associations": {
         "iostream": "cpp",
         "ostream": "cpp",
-        "stdexcept": "cpp"
-    }
+        "stdexcept": "cpp",
+        "iosfwd": "cpp"
+    },
+    "C_Cpp.default.compileCommands": [
+        ""
+    ]
 }
