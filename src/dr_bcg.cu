@@ -368,25 +368,33 @@ void dr_bcg::qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t 
 
     float *d_tau = nullptr;
     int *d_info = nullptr;
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_tau), sizeof(float) * k));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
 
-    size_t lwork_geqrf_d = 0;
     void *d_work = nullptr;
     size_t lwork_geqrf_h = 0;
     void *h_work = nullptr;
 
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_tau), sizeof(float) * k));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
-
     CUDA_CHECK(cudaMemcpy(Q, A, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
 
+    // Create device buffer
+    size_t lwork_geqrf_bytes_d = 0;
     CUSOLVER_CHECK(cusolverDnXgeqrf_bufferSize(cusolverH, params, m, n, CUDA_R_32F, Q,
                                                m, CUDA_R_32F, d_tau,
-                                               CUDA_R_32F, &lwork_geqrf_d,
+                                               CUDA_R_32F, &lwork_geqrf_bytes_d,
                                                &lwork_geqrf_h));
 
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), lwork_geqrf_d));
+    int lwork_orgqr = 0;
+    CUSOLVER_CHECK(cusolverDnSorgqr_bufferSize(cusolverH, m, n, k, Q, m, d_tau, &lwork_orgqr));
 
-    if (0 < lwork_geqrf_h)
+    // Note: The legacy cuSOLVER API returns lwork number of array values
+    // while the generic API returns lwork in bytes.
+    // This is why we multiply lwork_orgqr by sizeof(float) to get a
+    // proper comparison in workspace sizes.
+    const size_t lwork_bytes_d = std::max(lwork_geqrf_bytes_d, lwork_orgqr * sizeof(float));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), lwork_bytes_d));
+
+    if (lwork_geqrf_h > 0)
     {
         h_work = reinterpret_cast<void *>(malloc(lwork_geqrf_h));
         if (h_work == nullptr)
@@ -397,16 +405,12 @@ void dr_bcg::qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t 
 
     CUSOLVER_CHECK(cusolverDnXgeqrf(cusolverH, params, m, n, CUDA_R_32F, Q,
                                     m, CUDA_R_32F, d_tau,
-                                    CUDA_R_32F, d_work, lwork_geqrf_d, h_work,
+                                    CUDA_R_32F, d_work, lwork_bytes_d, h_work,
                                     lwork_geqrf_h, d_info));
     if (h_work)
     {
         free(h_work); // No longer needed
     }
-
-    const int max_R_col = std::min(m, n);
-
-    copy_upper_triangular(R, Q, m, n);
 
     CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
     if (0 > info)
@@ -414,16 +418,16 @@ void dr_bcg::qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t 
         throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
     }
 
-    // Explicitly compute Q
-    int lwork_orgqr = 0;
-    CUSOLVER_CHECK(cusolverDnSorgqr_bufferSize(cusolverH, m, n, k, Q, m, d_tau, &lwork_orgqr));
-    if (lwork_orgqr > lwork_geqrf_d)
-    {
-        CUDA_CHECK(cudaFree(d_work));
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), sizeof(float) * lwork_orgqr));
-    }
+    const int max_R_col = std::min(m, n);
+    copy_upper_triangular(R, Q, m, n);
 
-    CUSOLVER_CHECK(cusolverDnSorgqr(cusolverH, m, n, k, Q, m, d_tau, reinterpret_cast<float *>(d_work), lwork_orgqr, d_info));
+    // Explicitly compute Q
+    CUSOLVER_CHECK(cusolverDnSorgqr(cusolverH, m, n, k, Q, m, d_tau, reinterpret_cast<float *>(d_work), lwork_bytes_d, d_info));
+    CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
+    if (0 > info)
+    {
+        throw std::runtime_error(std::to_string(-info) + "-th parameter is wrong \n");
+    }
 
     CUDA_CHECK(cudaFree(d_info));
     CUDA_CHECK(cudaFree(d_tau));
