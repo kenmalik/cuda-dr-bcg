@@ -97,18 +97,6 @@ namespace dr_bcg
         float *d_work,
         float *d_y);
 
-    void thin_qr(
-        cusolverDnHandle_t &cusolverH,
-        cusolverDnParams_t &params,
-        cublasHandle_t &cublasH,
-        float *Q,
-        float *R,
-        const int m,
-        const int n,
-        const float *A);
-
-    void qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *Q, float *R, const int m, const int n, const float *A);
-
     void get_R(cublasHandle_t &cublasH, float *h_R, const int n, const int m, const float *A, const float *X, const float *B);
 
     void get_R(

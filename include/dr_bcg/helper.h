@@ -33,3 +33,22 @@ std::vector<double> read_matrix_bin(std::string filename);
 void copy_upper_triangular(float *dst, float *src, const int m, const int n);
 
 void invert_square_matrix(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params, float *A, const int n);
+
+void thin_qr(
+    cusolverDnHandle_t &cusolverH,
+    cusolverDnParams_t &params,
+    cublasHandle_t &cublasH,
+    float *Q,
+    float *R,
+    const int m,
+    const int n,
+    const float *A);
+
+void qr_factorization(
+    cusolverDnHandle_t &cusolverH,
+    cusolverDnParams_t &params,
+    float *Q,
+    float *R,
+    const int m,
+    const int n,
+    const float *A);
