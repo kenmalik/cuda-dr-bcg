@@ -19,6 +19,67 @@ __global__ void set_val(float *A_d, float val, size_t num_elements)
     }
 }
 
+class DeviceSuiteSparseMatrix
+{
+public:
+    explicit DeviceSuiteSparseMatrix(SuiteSparseMatrix &ssm_A)
+    {
+        CUDA_CHECK(cudaMalloc(&d_jc_, sizeof(int64_t) * ssm_A.jc_size()));
+        CUDA_CHECK(cudaMalloc(&d_ir_, sizeof(int64_t) * ssm_A.ir_size()));
+        CUDA_CHECK(cudaMalloc(&d_vals_, sizeof(float) * ssm_A.nnz()));
+
+        // Convert from default Matlab types
+        std::vector<int64_t> jc_64i(ssm_A.jc_size());
+        for (int i = 0; i < ssm_A.jc_size(); i++)
+        {
+            jc_64i[i] = static_cast<int64_t>(ssm_A.jc()[i]);
+        }
+        CUDA_CHECK(cudaMemcpy(d_jc_, jc_64i.data(), sizeof(int64_t) * jc_64i.size(), cudaMemcpyHostToDevice));
+
+        std::vector<int64_t> ir_64i(ssm_A.ir_size());
+        for (int i = 0; i < ssm_A.ir_size(); i++)
+        {
+            ir_64i[i] = static_cast<int64_t>(ssm_A.ir()[i]);
+        }
+        CUDA_CHECK(cudaMemcpy(d_ir_, ir_64i.data(), sizeof(int64_t) * ir_64i.size(), cudaMemcpyHostToDevice));
+
+        std::vector<float> nonzeros_32f(ssm_A.nnz());
+        for (int i = 0; i < ssm_A.nnz(); i++)
+        {
+            nonzeros_32f[i] = static_cast<float>(ssm_A.data()[i]);
+        }
+        CUDA_CHECK(cudaMemcpy(d_vals_, nonzeros_32f.data(), sizeof(float) * nonzeros_32f.size(), cudaMemcpyHostToDevice));
+
+        CUSPARSE_CHECK(cusparseCreateCsr(
+            &A_, ssm_A.rows(), ssm_A.cols(), ssm_A.nnz(),
+            d_jc_, d_ir_, d_vals_, CUSPARSE_INDEX_64I, CUSPARSE_INDEX_64I,
+            CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
+    }
+
+    ~DeviceSuiteSparseMatrix()
+    {
+        if (A_)
+            CUSPARSE_CHECK(cusparseDestroySpMat(A_));
+        if (d_jc_)
+            CUDA_CHECK(cudaFree(d_jc_));
+        if (d_ir_)
+            CUDA_CHECK(cudaFree(d_ir_));
+        if (d_vals_)
+            CUDA_CHECK(cudaFree(d_vals_));
+    }
+
+    cusparseSpMatDescr_t &handle()
+    {
+        return A_;
+    }
+
+private:
+    int64_t *d_jc_ = nullptr;
+    int64_t *d_ir_ = nullptr;
+    float *d_vals_ = nullptr;
+    cusparseSpMatDescr_t A_;
+};
+
 int main(int argc, char *argv[])
 {
     int s;
@@ -51,57 +112,18 @@ int main(int argc, char *argv[])
     cublasHandle_t cublasH;
     CUBLAS_CHECK(cublasCreate_v2(&cublasH));
 
-    cusparseHandle_t cusparseH = NULL;
+    cusparseHandle_t cusparseH;
     CUSPARSE_CHECK(cusparseCreate(&cusparseH));
 
-    const std::string matrix_file = argv[1];
-    SuiteSparseMatrix ssm(matrix_file);
+    const std::string A_file = argv[1];
+    SuiteSparseMatrix ssm_A(A_file);
+    DeviceSuiteSparseMatrix A{ssm_A};
 
-    int64_t *jc_d = nullptr;
-    int64_t *ir_d = nullptr;
-    float *vals_d = nullptr;
+    const std::string L_file = argv[1];
+    SuiteSparseMatrix ssm_L(L_file);
+    DeviceSuiteSparseMatrix L{ssm_L};
 
-    float *x_d = nullptr;
-    CUDA_CHECK(cudaMalloc(&x_d, sizeof(float) * ssm.rows()));
-
-    float *b_d = nullptr;
-    std::vector<float> b_h(ssm.rows(), 1);
-    CUDA_CHECK(cudaMalloc(&b_d, sizeof(float) * b_h.size()));
-    CUDA_CHECK(cudaMemcpy(b_d, b_h.data(), sizeof(float) * b_h.size(), cudaMemcpyHostToDevice));
-
-    CUDA_CHECK(cudaMalloc(&jc_d, sizeof(int64_t) * ssm.jc_size()));
-    CUDA_CHECK(cudaMalloc(&ir_d, sizeof(int64_t) * ssm.ir_size()));
-    CUDA_CHECK(cudaMalloc(&vals_d, sizeof(float) * ssm.nnz()));
-
-    // Convert from default Matlab types
-    std::vector<int64_t> jc_64i(ssm.jc_size());
-    for (int i = 0; i < ssm.jc_size(); i++)
-    {
-        jc_64i[i] = static_cast<int64_t>(ssm.jc()[i]);
-    }
-    CUDA_CHECK(cudaMemcpy(jc_d, jc_64i.data(), sizeof(int64_t) * jc_64i.size(), cudaMemcpyHostToDevice));
-
-    std::vector<int64_t> ir_64i(ssm.ir_size());
-    for (int i = 0; i < ssm.ir_size(); i++)
-    {
-        ir_64i[i] = static_cast<int64_t>(ssm.ir()[i]);
-    }
-    CUDA_CHECK(cudaMemcpy(ir_d, ir_64i.data(), sizeof(int64_t) * ir_64i.size(), cudaMemcpyHostToDevice));
-
-    std::vector<float> nonzeros_32f(ssm.nnz());
-    for (int i = 0; i < ssm.nnz(); i++)
-    {
-        nonzeros_32f[i] = static_cast<float>(ssm.data()[i]);
-    }
-    CUDA_CHECK(cudaMemcpy(vals_d, nonzeros_32f.data(), sizeof(float) * nonzeros_32f.size(), cudaMemcpyHostToDevice));
-
-    cusparseSpMatDescr_t A;
-    CUSPARSE_CHECK(cusparseCreateCsr(
-        &A, ssm.rows(), ssm.cols(), ssm.nnz(),
-        jc_d, ir_d, vals_d, CUSPARSE_INDEX_64I, CUSPARSE_INDEX_64I,
-        CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
-
-    const int n = ssm.rows();
+    const int n = ssm_A.rows();
 
     cusparseDnMatDescr_t X;
     float *d_X = nullptr;
@@ -123,9 +145,9 @@ int main(int argc, char *argv[])
     const int max_iterations = n;
 
     int iterations = 0;
-    std::cerr << "TODO: Implement preconditioned DR-BCG" << std::endl;
+    dr_bcg::dr_bcg(cusolverH, cusolverP, cublasH, cusparseH, A.handle(), X, B, L.handle(), tolerance, max_iterations, &iterations);
 
-    std::cout << iterations;
+    std::cout << iterations << std::endl;
 
     return 0;
 }
