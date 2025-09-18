@@ -4,6 +4,7 @@
 #include <string>
 #include <cmath>
 #include <limits>
+#include <filesystem>
 
 #include <suitesparse_matrix.h>
 
@@ -108,10 +109,22 @@ int main(int argc, char *argv[])
         {
             throw std::invalid_argument("Invalid arg count");
         }
+
+        if (!std::filesystem::exists(argv[1]))
+        {
+            throw std::invalid_argument(std::string(argv[1]) + " does not exist.");
+        }
+
+        if (!std::filesystem::exists(argv[2]))
+        {
+            throw std::invalid_argument(std::string(argv[2]) + " does not exist.");
+        }
     }
     catch (const std::exception &e)
     {
         std::cerr << "Usage: ./example_2 [spd matrix] [preconditioner] [block size]" << std::endl;
+        std::cerr << std::endl
+                  << "Error: " << e.what() << std::endl;
         return 1;
     }
 
