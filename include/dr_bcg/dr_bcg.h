@@ -43,6 +43,20 @@ namespace dr_bcg
         int max_iterations,
         int *iterations = nullptr);
 
+    cusolverStatus_t dr_bcg(
+        cusolverDnHandle_t cusolverH,
+        cusolverDnParams_t cusolverParams,
+        cublasHandle_t cublasH,
+        cusparseHandle_t cusparseH,
+        cusparseSpMatDescr_t &A,
+        cusparseDnMatDescr_t &X,
+        cusparseDnMatDescr_t &B,
+        cusparseSpMatDescr_t &L,
+        float tolerance,
+        int max_iterations,
+        int *iterations = nullptr);
+
+
     void get_xi(
         cusolverDnHandle_t &cusolverH, cusolverDnParams_t &cusolverParams, cublasHandle_t &cublasH,
         const int m, const int n, DeviceBuffer &d, const float *d_A);
