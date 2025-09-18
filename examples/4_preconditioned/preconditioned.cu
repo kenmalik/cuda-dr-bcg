@@ -160,5 +160,13 @@ int main(int argc, char *argv[])
 
     std::cout << iterations << std::endl;
 
+    CUSPARSE_CHECK(cusparseDestroyDnMat(X));
+    CUSPARSE_CHECK(cusparseDestroyDnMat(B));
+
+    CUSPARSE_CHECK(cusparseDestroy(cusparseH));
+    CUBLAS_CHECK(cublasDestroy_v2(cublasH));
+    CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
+    CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverP));
+
     return 0;
 }
