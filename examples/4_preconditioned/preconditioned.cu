@@ -59,13 +59,24 @@ public:
     ~DeviceSuiteSparseMatrix()
     {
         if (A_)
+        {
             CUSPARSE_CHECK(cusparseDestroySpMat(A_));
+        }
         if (d_jc_)
+        {
             CUDA_CHECK(cudaFree(d_jc_));
+            d_jc_ = nullptr;
+        }
         if (d_ir_)
+        {
             CUDA_CHECK(cudaFree(d_ir_));
+            d_ir_ = nullptr;
+        }
         if (d_vals_)
+        {
             CUDA_CHECK(cudaFree(d_vals_));
+            d_vals_ = nullptr;
+        }
     }
 
     cusparseSpMatDescr_t &handle()
@@ -77,7 +88,7 @@ private:
     int64_t *d_jc_ = nullptr;
     int64_t *d_ir_ = nullptr;
     float *d_vals_ = nullptr;
-    cusparseSpMatDescr_t A_;
+    cusparseSpMatDescr_t A_{};
 };
 
 int main(int argc, char *argv[])
