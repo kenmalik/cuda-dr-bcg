@@ -7,6 +7,7 @@
 #include <filesystem>
 
 #include <mat_utils/mat_reader.h>
+#include <mat_utils/mat_writer.h>
 
 #include "dr_bcg/dr_bcg.h"
 #include "dr_bcg/helper.h"
@@ -193,6 +194,11 @@ int main(int argc, char *argv[])
     dr_bcg::dr_bcg(cusolverH, cusolverP, cublasH, cusparseH, A.handle(), X, B, L.handle(), tolerance, max_iterations, &iterations);
 
     std::cout << iterations << std::endl;
+
+    std::vector<float> h_X(n * s);
+    CUDA_CHECK(cudaMemcpy(h_X.data(), d_X, sizeof(float) * h_X.size(), cudaMemcpyDeviceToHost));
+    mat_utils::MatWriter writer("X.mat");
+    writer.write_dense("X", h_X, n, s);
 
     CUSPARSE_CHECK(cusparseDestroyDnMat(X));
     CUSPARSE_CHECK(cusparseDestroyDnMat(B));
