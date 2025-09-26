@@ -5,7 +5,7 @@
 #include <cmath>
 #include <limits>
 
-#include <suitesparse_matrix.h>
+#include <mat_utils/mat_reader.h>
 
 #include "dr_bcg/dr_bcg.h"
 #include "dr_bcg/helper.h"
@@ -55,7 +55,7 @@ int main(int argc, char *argv[])
     CUSPARSE_CHECK(cusparseCreate(&cusparseH));
 
     const std::string matrix_file = argv[1];
-    SuiteSparseMatrix ssm(matrix_file, {"Problem"}, "A");
+    mat_utils::MatReader ssm(matrix_file, {"Problem"}, "A");
 
     int64_t *jc_d = nullptr;
     int64_t *ir_d = nullptr;

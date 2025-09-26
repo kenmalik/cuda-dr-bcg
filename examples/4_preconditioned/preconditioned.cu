@@ -6,7 +6,7 @@
 #include <limits>
 #include <filesystem>
 
-#include <suitesparse_matrix.h>
+#include <mat_utils/mat_reader.h>
 
 #include "dr_bcg/dr_bcg.h"
 #include "dr_bcg/helper.h"
@@ -23,13 +23,12 @@ __global__ void set_val(float *A_d, float val, size_t num_elements)
 class DeviceSuiteSparseMatrix
 {
 public:
-    explicit DeviceSuiteSparseMatrix(SuiteSparseMatrix &ssm_A)
+    explicit DeviceSuiteSparseMatrix(mat_utils::MatReader &ssm_A)
     {
         CUDA_CHECK(cudaMalloc(&d_rowPtr, sizeof(int64_t) * (ssm_A.rows() + 1)));
         CUDA_CHECK(cudaMalloc(&d_colInd, sizeof(int64_t) * ssm_A.nnz()));
         CUDA_CHECK(cudaMalloc(&d_vals, sizeof(float) * ssm_A.nnz()));
 
-        // ---- CPU CSC -> CSR (same structure as you have) ----
         std::vector<size_t> rowCounts(ssm_A.rows(), 0);
         for (size_t j = 0; j < ssm_A.cols(); ++j)
         {
@@ -39,19 +38,15 @@ public:
             }
         }
 
-        // csrRowPtr (size_t to accumulate, then convert to int64_t)
         std::vector<size_t> csrRowPtr_sz(ssm_A.rows() + 1, 0);
         for (size_t i = 0; i < ssm_A.rows(); ++i)
             csrRowPtr_sz[i + 1] = csrRowPtr_sz[i] + rowCounts[i];
 
-        // working cursors
         std::vector<size_t> next = csrRowPtr_sz;
 
-        // outputs (host)
         std::vector<size_t> csrColInd_sz(ssm_A.nnz());
         std::vector<float> csrVal(ssm_A.nnz());
 
-        // fill CSR
         for (size_t j = 0; j < ssm_A.cols(); ++j)
         {
             for (size_t p = ssm_A.jc()[j]; p < ssm_A.jc()[j + 1]; ++p)
@@ -63,7 +58,7 @@ public:
             }
         }
 
-        // ---- Convert host indices to int64_t (to match device + cuSPARSE descriptor) ----
+        // Convert host indices to int64_t
         std::vector<int64_t> csrRowPtr64(ssm_A.rows() + 1);
         std::vector<int64_t> csrColInd64(ssm_A.nnz());
         for (size_t i = 0; i < csrRowPtr_sz.size(); ++i)
@@ -71,7 +66,6 @@ public:
         for (size_t k = 0; k < csrColInd_sz.size(); ++k)
             csrColInd64[k] = static_cast<int64_t>(csrColInd_sz[k]);
 
-        // ---- Copy to device (note sizeof types!) ----
         CUDA_CHECK(cudaMemcpy(d_rowPtr, csrRowPtr64.data(),
                               sizeof(int64_t) * csrRowPtr64.size(), cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(d_colInd, csrColInd64.data(),
@@ -168,12 +162,12 @@ int main(int argc, char *argv[])
     CUSPARSE_CHECK(cusparseCreate(&cusparseH));
 
     const std::string A_file = argv[1];
-    SuiteSparseMatrix ssm_A(A_file, {"Problem"}, "A");
+    mat_utils::MatReader ssm_A(A_file, {"Problem"}, "A");
     DeviceSuiteSparseMatrix A{ssm_A};
     const int n = ssm_A.rows();
 
     const std::string L_file = argv[2];
-    SuiteSparseMatrix ssm_L(L_file, {}, "L");
+    mat_utils::MatReader ssm_L(L_file, {}, "L");
     DeviceSuiteSparseMatrix L{ssm_L};
 
     cusparseDnMatDescr_t X;

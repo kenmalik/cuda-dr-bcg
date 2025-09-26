@@ -1,16 +1,16 @@
 include(FetchContent)
 FetchContent_Declare(
-    suitesparse_matrix
-    GIT_REPOSITORY git@github.com:kenmalik/suitesparse-matrix.git
+    mat_utils
+    GIT_REPOSITORY git@github.com:kenmalik/mat-utils.git
     GIT_TAG main
 )
-FetchContent_MakeAvailable(suitesparse_matrix)
+FetchContent_MakeAvailable(mat_utils)
 
 add_executable(
     read_mat_file
     "read_mat_file.cu"
 )
-target_link_libraries(read_mat_file PRIVATE dr_bcg suitesparse_matrix)
+target_link_libraries(read_mat_file PRIVATE dr_bcg mat_utils)
 
 # Set RPATH to prioritize CUDA over MATLAB in conflicts
 set_target_properties(

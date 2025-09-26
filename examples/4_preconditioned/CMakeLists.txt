@@ -1,10 +1,10 @@
-FetchContent_MakeAvailable(suitesparse_matrix)
+FetchContent_MakeAvailable(mat_utils)
 
 add_executable(
     preconditioned
     "preconditioned.cu"
 )
-target_link_libraries(preconditioned PRIVATE dr_bcg suitesparse_matrix)
+target_link_libraries(preconditioned PRIVATE dr_bcg mat_utils)
 
 # Set RPATH to prioritize CUDA over MATLAB in conflicts
 set_target_properties(
