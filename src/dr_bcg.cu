@@ -185,12 +185,10 @@ void dr_bcg::get_sigma(cublasHandle_t cublasH, int s, DeviceBuffer &d)
     NVTX3_FUNC_RANGE();
 
     // sigma = zeta * sigma
-    constexpr float sgemm_alpha = 1;
-    constexpr float sgemm_beta = 0;
-    CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, s, s, s,
-                                &sgemm_alpha, d.zeta, s, d.sigma, s,
-                                &sgemm_beta, d.temp, s));
-    CUDA_CHECK(cudaMemcpy(d.sigma, d.temp, sizeof(float) * s * s, cudaMemcpyDeviceToDevice));
+    constexpr float alpha = 1;
+    CUBLAS_CHECK(cublasStrmm_v2(
+        cublasH, CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT,
+        s, s, &alpha, d.zeta, s, d.sigma, s, d.sigma, s));
 }
 
 void dr_bcg::get_s(cublasHandle_t cublasH, const int n, const int s, DeviceBuffer &d)
@@ -830,9 +828,26 @@ cusolverStatus_t dr_bcg::dr_bcg(
 
         // xi = (s' * A * s)^-1
         get_xi(cublasH, cusolverH, cusolverParams, cusparseH, A, n, s, d);
+        check_nan(d.xi, s * s, "get_xi: iteration " + std::to_string(i));
 
         // X = X + s * xi * sigma
         get_next_X(cublasH, n, s, d.s, d.xi, d.temp, d.sigma, d_X);
+        try {
+        check_nan(d_X, n * s, "get_next_X: iteration " + std::to_string(i));
+        } catch (const std::runtime_error &e) {
+            // std::cerr << "s" << std::endl;
+            // print_device_matrix(d.s, n, s);
+            // std::cerr << "xi" << std::endl;
+            // print_device_matrix(d.xi, s, s);
+            // std::cerr << "sigma" << std::endl;
+            // print_device_matrix(d.sigma, s, s);
+        }
+        if (i == 10) {
+            std::cerr << "zeta" << std::endl;
+            print_device_matrix(d.zeta, s, s);
+            std::cerr << "sigma" << std::endl;
+            print_device_matrix(d.sigma, s, s);
+        }
 
         // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
         float relative_residual_norm;
@@ -851,11 +866,15 @@ cusolverStatus_t dr_bcg::dr_bcg(
 
             // [w, zeta] = qr(w - (L^-1) * A * s * xi, 'econ')
             get_w_zeta(cusolverH, cusolverParams, cublasH, cusparseH, n, s, d, A, L);
+            check_nan(d.w, n * s, "get_w_zeta: w: iteration " + std::to_string(i));
+            check_nan(d.zeta, s * s, "get_w_zeta: w: iteration " + std::to_string(i));
 
             // s = (L^-1)' * w + s * zeta'
             get_s(cusparseH, cublasH, n, s, d, L);
+            check_nan(d.s, n * s, "get_s: iteration " + std::to_string(i));
 
             get_sigma(cublasH, s, d);
+            check_nan(d.sigma, s * s, "get_sigma: iteration " + std::to_string(i));
         }
     }
 
