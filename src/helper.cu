@@ -4,8 +4,6 @@
 #include <fstream>
 #include <nvtx3/nvtx3.hpp>
 
-#include <cublas_v2.h>
-
 #include "dr_bcg/helper.h"
 
 /**
@@ -579,3 +577,72 @@ void thin_qr(
 }
 
 #endif
+
+void print_sparse_matrix(const cusparseHandle_t &cusparseH, const cusparseSpMatDescr_t &sp_mat)
+{
+    constexpr cusparseSparseToDenseAlg_t ALG = CUSPARSE_SPARSETODENSE_ALG_DEFAULT;
+
+    size_t buffer_size = 0;
+    void *buffer = nullptr;
+
+    int64_t rows = 0;
+    int64_t cols = 0;
+    int64_t nnz = 0;
+
+    float *dense_d = nullptr;
+    cusparseDnMatDescr_t dense{};
+
+    CUSPARSE_CHECK(cusparseSpMatGetSize(sp_mat, &rows, &cols, &nnz));
+    CUDA_CHECK(cudaMalloc(&dense_d, sizeof(float) * rows * cols));
+    CUSPARSE_CHECK(cusparseCreateDnMat(&dense, rows, cols, rows, dense_d, CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+    CUSPARSE_CHECK(cusparseSparseToDense_bufferSize(cusparseH, sp_mat, dense, ALG, &buffer_size));
+    CUDA_CHECK(cudaMalloc(&buffer, buffer_size));
+    CUSPARSE_CHECK(cusparseSparseToDense(cusparseH, sp_mat, dense, ALG, buffer));
+
+    print_device_matrix(dense_d, rows, cols);
+
+    CUDA_CHECK(cudaFree(buffer));
+    CUDA_CHECK(cudaFree(dense_d));
+    CUSPARSE_CHECK(cusparseDestroyDnMat(dense));
+}
+
+void sptri_left_multiply(
+    const cusparseHandle_t &cusparseH,
+    cusparseDnMatDescr_t &C,
+    cusparseOperation_t opA,
+    const cusparseSpMatDescr_t &A,
+    const cusparseDnMatDescr_t &B)
+{
+    constexpr cusparseOperation_t OP_B = CUSPARSE_OPERATION_NON_TRANSPOSE;
+    constexpr float alpha = 1;
+    constexpr cudaDataType COMPUTE_TYPE = CUDA_R_32F;
+    constexpr cusparseSpSMAlg_t ALG_TYPE = CUSPARSE_SPSM_ALG_DEFAULT;
+
+    cusparseSpSMDescr_t spsm{};
+    CUSPARSE_CHECK(cusparseSpSM_createDescr(&spsm));
+
+    void *buffer = nullptr;
+    size_t buffer_size = 0;
+
+    CUSPARSE_CHECK(cusparseSpSM_bufferSize(cusparseH, opA, OP_B, reinterpret_cast<const void *>(&alpha),
+                                           A, B, C, COMPUTE_TYPE, ALG_TYPE, spsm, &buffer_size));
+
+    if (buffer_size > 0)
+    {
+        CUDA_CHECK(cudaMalloc(&buffer, buffer_size));
+    }
+    else
+    {
+        throw std::runtime_error("s solve: buffer not allocated");
+    }
+
+    CUSPARSE_CHECK(cusparseSpSM_analysis(cusparseH, opA, OP_B, reinterpret_cast<const void *>(&alpha),
+                                         A, B, C, COMPUTE_TYPE, ALG_TYPE, spsm, buffer));
+
+    CUSPARSE_CHECK(cusparseSpSM_solve(cusparseH, opA, OP_B, reinterpret_cast<const void *>(&alpha),
+                                      A, B, C, COMPUTE_TYPE, ALG_TYPE, spsm));
+
+    CUDA_CHECK(cudaFree(buffer));
+    CUSPARSE_CHECK(cusparseSpSM_destroyDescr(spsm));
+}

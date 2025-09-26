@@ -2,6 +2,7 @@
 #include <vector>
 #include <tuple>
 #include <string>
+#include <algorithm>
 
 #include <nvtx3/nvtx3.hpp>
 
@@ -207,6 +208,46 @@ void dr_bcg::get_s(cublasHandle_t cublasH, const int n, const int s, DeviceBuffe
     constexpr float sgeam_beta = 1;
     CUBLAS_CHECK(cublasSgeam(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, s,
                              &sgeam_alpha, d.w, n, &sgeam_beta, d.temp, n, d.s, n));
+}
+
+void dr_bcg::get_s(cusparseHandle_t cusparseH, cublasHandle_t cublasH, const int n, const int s, DeviceBuffer &d, cusparseSpMatDescr_t &L)
+{
+    NVTX3_FUNC_RANGE();
+
+    // temp = s * zeta'
+    constexpr float strmm_alpha = 1;
+    CUBLAS_CHECK(cublasStrmm_v2(cublasH, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER,
+                                CUBLAS_OP_T, CUBLAS_DIAG_NON_UNIT, n, s,
+                                &strmm_alpha, d.zeta, s, d.s, n, d.temp, n));
+
+    float *sptri_buffer = nullptr;
+    CUDA_CHECK(cudaMalloc(&sptri_buffer, sizeof(float) * n * s));
+
+    {
+        // sptri_buffer = L^-1 * w
+        nvtx3::scoped_range Sgemm{"get_s.sptri_left_multiply"};
+
+        cusparseDnMatDescr_t w_desc{};
+        CUSPARSE_CHECK(cusparseCreateDnMat(&w_desc, n, s, n, reinterpret_cast<void *>(d.w), CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+        cusparseDnMatDescr_t sptri_temp{};
+        CUSPARSE_CHECK(cusparseCreateDnMat(&sptri_temp, n, s, n, reinterpret_cast<void *>(sptri_buffer), CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+        sptri_left_multiply(cusparseH, sptri_temp, CUSPARSE_OPERATION_NON_TRANSPOSE, L, w_desc);
+
+        CUSPARSE_CHECK(cusparseDestroyDnMat(sptri_temp));
+        CUSPARSE_CHECK(cusparseDestroyDnMat(w_desc));
+
+        CUDA_CHECK(cudaMemcpy(d.temp, sptri_buffer, sizeof(float) * n * s, cudaMemcpyDeviceToDevice));
+    }
+
+    // s = sptri_buffer + temp
+    constexpr float sgeam_alpha = 1;
+    constexpr float sgeam_beta = 1;
+    CUBLAS_CHECK(cublasSgeam(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, s,
+                             &sgeam_alpha, sptri_buffer, n, &sgeam_beta, d.temp, n, d.s, n));
+
+    CUDA_CHECK(cudaFree(sptri_buffer));
 }
 
 void dr_bcg::get_w_zeta(
@@ -713,6 +754,11 @@ cusolverStatus_t dr_bcg::dr_bcg(
 {
     NVTX3_FUNC_RANGE();
 
+    cusparseFillMode_t fill = CUSPARSE_FILL_MODE_LOWER;    // or UPPER
+    cusparseDiagType_t diag = CUSPARSE_DIAG_TYPE_NON_UNIT; // or UNIT
+    cusparseSpMatSetAttribute(L, CUSPARSE_SPMAT_FILL_MODE, &fill, sizeof(fill));
+    cusparseSpMatSetAttribute(L, CUSPARSE_SPMAT_DIAG_TYPE, &diag, sizeof(diag));
+
     int64_t n = 0;
     int64_t s = 0;
     int64_t ld_X = 0;
@@ -740,18 +786,34 @@ cusolverStatus_t dr_bcg::dr_bcg(
     // R = B - AX
     get_R(cublasH, cusparseH, R, A, X, B);
 
+    {
+        // [w, sigma] = qr(L^-1 * R,'econ')
+        cusparseDnMatDescr_t temp_desc{};
+        CUSPARSE_CHECK(cusparseCreateDnMat(&temp_desc, n, s, n, d.temp, CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+        sptri_left_multiply(cusparseH, temp_desc, CUSPARSE_OPERATION_NON_TRANSPOSE, L, R);
+
 #ifdef USE_THIN_QR
-    thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.sigma, n, s, d_R);
+        thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.sigma, n, s, d_R);
 #else
-    qr_factorization(cusolverH, cusolverParams, d.w, d.sigma, n, s, d_R);
+        qr_factorization(cusolverH, cusolverParams, d.w, d.sigma, n, s, d.temp);
 #endif
+
+        CUSPARSE_CHECK(cusparseDestroyDnMat(temp_desc));
+    }
 
     // R never used later
     CUDA_CHECK(cudaFree(d_R));
     CUSPARSE_CHECK(cusparseDestroyDnMat(R));
 
-    // s = w
-    CUDA_CHECK(cudaMemcpy(d.s, d.w, sizeof(float) * n * s, cudaMemcpyDeviceToDevice));
+    // s = (L^-1)' * w
+    cusparseDnMatDescr_t w{};
+    CUSPARSE_CHECK(cusparseCreateDnMat(&w, n, s, n, d.w, CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+    cusparseDnMatDescr_t s_desc{};
+    CUSPARSE_CHECK(cusparseCreateDnMat(&s_desc, n, s, n, d.s, CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+    sptri_left_multiply(cusparseH, s_desc, CUSPARSE_OPERATION_TRANSPOSE, L, w);
 
     float B1_norm;
     constexpr int stride = 1;
@@ -787,9 +849,11 @@ cusolverStatus_t dr_bcg::dr_bcg(
         {
             nvtx3::scoped_range new_s_and_sigma{"get_new_s_and_sigma"};
 
-            get_w_zeta(cusolverH, cusolverParams, cublasH, cusparseH, n, s, d, A);
+            // [w, zeta] = qr(w - (L^-1) * A * s * xi, 'econ')
+            get_w_zeta(cusolverH, cusolverParams, cublasH, cusparseH, n, s, d, A, L);
 
-            get_s(cublasH, n, s, d);
+            // s = (L^-1)' * w + s * zeta'
+            get_s(cusparseH, cublasH, n, s, d, L);
 
             get_sigma(cublasH, s, d);
         }
@@ -801,4 +865,97 @@ cusolverStatus_t dr_bcg::dr_bcg(
     }
 
     return CUSOLVER_STATUS_SUCCESS;
+}
+
+void dr_bcg::get_w_zeta(
+    cusolverDnHandle_t &cusolverH,
+    cusolverDnParams_t &cusolverParams,
+    cublasHandle_t &cublasH,
+    cusparseHandle_t &cusparseH,
+    const int n,
+    const int s,
+    DeviceBuffer &d,
+    cusparseSpMatDescr_t &A,
+    cusparseSpMatDescr_t &L)
+{
+    NVTX3_FUNC_RANGE();
+
+    constexpr cusparseOperation_t transpose = CUSPARSE_OPERATION_NON_TRANSPOSE;
+    constexpr cudaDataType compute_type = CUDA_R_32F;
+    constexpr cusparseSpMMAlg_t mm_type = CUSPARSE_SPMM_ALG_DEFAULT;
+
+    void *buffer = nullptr;
+    size_t buffer_size = 0;
+
+    cusparseDnMatDescr_t s_desc;
+    CUSPARSE_CHECK(cusparseCreateDnMat(&s_desc, n, s, n, d.s, CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+    cusparseDnMatDescr_t work;
+    CUSPARSE_CHECK(cusparseCreateDnMat(&work, n, s, n, d.temp, CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+    {
+        // temp = A * s
+        nvtx3::scoped_range SpMM{"get_w_zeta.SpMM"};
+        constexpr float alpha_1 = 1;
+        constexpr float beta_1 = 0;
+        CUSPARSE_CHECK(cusparseSpMM_bufferSize(
+            cusparseH, transpose, transpose,
+            &alpha_1, A, s_desc, &beta_1, work,
+            compute_type, mm_type, &buffer_size));
+
+        if (buffer_size > 0)
+        {
+            CUDA_CHECK(cudaMalloc(&buffer, buffer_size));
+        }
+
+        CUSPARSE_CHECK(cusparseSpMM(
+            cusparseH, transpose, transpose,
+            &alpha_1, A, s_desc, &beta_1, work,
+            compute_type, mm_type, buffer));
+
+        if (buffer)
+        {
+            CUDA_CHECK(cudaFree(buffer));
+        }
+    }
+
+    {
+        nvtx3::scoped_range Sgemm{"get_w_zeta.sptri_left_multiply"};
+        float *sptri_buffer = nullptr;
+        CUDA_CHECK(cudaMalloc(&sptri_buffer, sizeof(float) * n * s));
+
+        cusparseDnMatDescr_t temp_desc{};
+        CUSPARSE_CHECK(cusparseCreateDnMat(&temp_desc, n, s, n, reinterpret_cast<void *>(d.temp), CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+        cusparseDnMatDescr_t sptri_temp{};
+        CUSPARSE_CHECK(cusparseCreateDnMat(&sptri_temp, n, s, n, reinterpret_cast<void *>(sptri_buffer), CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+        sptri_left_multiply(cusparseH, sptri_temp, CUSPARSE_OPERATION_NON_TRANSPOSE, L, temp_desc);
+
+        CUSPARSE_CHECK(cusparseDestroyDnMat(sptri_temp));
+        CUSPARSE_CHECK(cusparseDestroyDnMat(temp_desc));
+
+        CUDA_CHECK(cudaMemcpy(d.temp, sptri_buffer, sizeof(float) * n * s, cudaMemcpyDeviceToDevice));
+
+        CUDA_CHECK(cudaFree(sptri_buffer));
+    }
+
+    {
+        nvtx3::scoped_range Sgemm{"get_w_zeta.Sgemm"};
+        // w - temp * xi
+        constexpr float alpha_2 = -1;
+        constexpr float beta_2 = 1;
+        CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, s, s,
+                                    &alpha_2, d.temp, n, d.xi, s,
+                                    &beta_2, d.w, n));
+    }
+
+    {
+        nvtx3::scoped_range factorization{"get_w_zeta.factorization"};
+#ifdef USE_THIN_QR
+        thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.zeta, n, s, d.w);
+#else
+        qr_factorization(cusolverH, cusolverParams, d.w, d.zeta, n, s, d.w);
+#endif
+    }
 }

@@ -56,7 +56,6 @@ namespace dr_bcg
         int max_iterations,
         int *iterations = nullptr);
 
-
     void get_xi(
         cusolverDnHandle_t &cusolverH, cusolverDnParams_t &cusolverParams, cublasHandle_t &cublasH,
         const int m, const int n, DeviceBuffer &d, const float *d_A);
@@ -75,6 +74,13 @@ namespace dr_bcg
 
     void get_s(cublasHandle_t cublasH, const int m, const int n, DeviceBuffer &d);
 
+    void get_s(cusparseHandle_t cusparseH,
+               cublasHandle_t cublasH,
+               const int n,
+               const int s,
+               DeviceBuffer &d,
+               cusparseSpMatDescr_t &L);
+
     void get_w_zeta(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &cusolverParams, cublasHandle_t &cublasH,
                     const int m, const int n, DeviceBuffer &d, const float *d_A);
 
@@ -87,6 +93,17 @@ namespace dr_bcg
         const int n,
         DeviceBuffer &d,
         cusparseSpMatDescr_t &A);
+
+    void get_w_zeta(
+        cusolverDnHandle_t &cusolverH,
+        cusolverDnParams_t &cusolverParams,
+        cublasHandle_t &cublasH,
+        cusparseHandle_t &cusparseH,
+        const int n,
+        const int s,
+        DeviceBuffer &d,
+        cusparseSpMatDescr_t &A,
+        cusparseSpMatDescr_t &L);
 
     void residual(cublasHandle_t &cublasH, float *d_residual, const float *B, const int m, const float *d_A, const float *d_X);
 

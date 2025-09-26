@@ -26,6 +26,8 @@ void print_matrix(const float *mat, const int rows, const int cols);
 
 void print_device_matrix(const float *d_mat, const int rows, const int cols);
 
+void print_sparse_matrix(const cusparseHandle_t &cusparseH, const cusparseSpMatDescr_t &sp_mat);
+
 void check_nan(const float *d_arr, size_t size, std::string step);
 
 std::vector<double> read_matrix_bin(std::string filename);
@@ -52,3 +54,10 @@ void qr_factorization(
     const int m,
     const int n,
     const float *A);
+
+void sptri_left_multiply(
+    const cusparseHandle_t &cusparseH,
+    cusparseDnMatDescr_t &C,
+    cusparseOperation_t opA,
+    const cusparseSpMatDescr_t &A,
+    const cusparseDnMatDescr_t &B);
