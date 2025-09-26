@@ -25,35 +25,63 @@ class DeviceSuiteSparseMatrix
 public:
     explicit DeviceSuiteSparseMatrix(SuiteSparseMatrix &ssm_A)
     {
-        CUDA_CHECK(cudaMalloc(&d_jc_, sizeof(int64_t) * ssm_A.jc_size()));
-        CUDA_CHECK(cudaMalloc(&d_ir_, sizeof(int64_t) * ssm_A.ir_size()));
-        CUDA_CHECK(cudaMalloc(&d_vals_, sizeof(float) * ssm_A.nnz()));
+        CUDA_CHECK(cudaMalloc(&d_rowPtr, sizeof(int64_t) * (ssm_A.rows() + 1)));
+        CUDA_CHECK(cudaMalloc(&d_colInd, sizeof(int64_t) * ssm_A.nnz()));
+        CUDA_CHECK(cudaMalloc(&d_vals, sizeof(float) * ssm_A.nnz()));
 
-        // Convert from default Matlab types
-        std::vector<int64_t> jc_64i(ssm_A.jc_size());
-        for (int i = 0; i < ssm_A.jc_size(); i++)
+        // ---- CPU CSC -> CSR (same structure as you have) ----
+        std::vector<size_t> rowCounts(ssm_A.rows(), 0);
+        for (size_t j = 0; j < ssm_A.cols(); ++j)
         {
-            jc_64i[i] = static_cast<int64_t>(ssm_A.jc()[i]);
+            for (size_t p = ssm_A.jc()[j]; p < ssm_A.jc()[j + 1]; ++p)
+            {
+                ++rowCounts[ssm_A.ir()[p]];
+            }
         }
-        CUDA_CHECK(cudaMemcpy(d_jc_, jc_64i.data(), sizeof(int64_t) * jc_64i.size(), cudaMemcpyHostToDevice));
 
-        std::vector<int64_t> ir_64i(ssm_A.ir_size());
-        for (int i = 0; i < ssm_A.ir_size(); i++)
-        {
-            ir_64i[i] = static_cast<int64_t>(ssm_A.ir()[i]);
-        }
-        CUDA_CHECK(cudaMemcpy(d_ir_, ir_64i.data(), sizeof(int64_t) * ir_64i.size(), cudaMemcpyHostToDevice));
+        // csrRowPtr (size_t to accumulate, then convert to int64_t)
+        std::vector<size_t> csrRowPtr_sz(ssm_A.rows() + 1, 0);
+        for (size_t i = 0; i < ssm_A.rows(); ++i)
+            csrRowPtr_sz[i + 1] = csrRowPtr_sz[i] + rowCounts[i];
 
-        std::vector<float> nonzeros_32f(ssm_A.nnz());
-        for (int i = 0; i < ssm_A.nnz(); i++)
+        // working cursors
+        std::vector<size_t> next = csrRowPtr_sz;
+
+        // outputs (host)
+        std::vector<size_t> csrColInd_sz(ssm_A.nnz());
+        std::vector<float> csrVal(ssm_A.nnz());
+
+        // fill CSR
+        for (size_t j = 0; j < ssm_A.cols(); ++j)
         {
-            nonzeros_32f[i] = static_cast<float>(ssm_A.data()[i]);
+            for (size_t p = ssm_A.jc()[j]; p < ssm_A.jc()[j + 1]; ++p)
+            {
+                size_t row = ssm_A.ir()[p];
+                size_t dst = next[row]++;
+                csrColInd_sz[dst] = j;
+                csrVal[dst] = static_cast<float>(ssm_A.data()[p]);
+            }
         }
-        CUDA_CHECK(cudaMemcpy(d_vals_, nonzeros_32f.data(), sizeof(float) * nonzeros_32f.size(), cudaMemcpyHostToDevice));
+
+        // ---- Convert host indices to int64_t (to match device + cuSPARSE descriptor) ----
+        std::vector<int64_t> csrRowPtr64(ssm_A.rows() + 1);
+        std::vector<int64_t> csrColInd64(ssm_A.nnz());
+        for (size_t i = 0; i < csrRowPtr_sz.size(); ++i)
+            csrRowPtr64[i] = static_cast<int64_t>(csrRowPtr_sz[i]);
+        for (size_t k = 0; k < csrColInd_sz.size(); ++k)
+            csrColInd64[k] = static_cast<int64_t>(csrColInd_sz[k]);
+
+        // ---- Copy to device (note sizeof types!) ----
+        CUDA_CHECK(cudaMemcpy(d_rowPtr, csrRowPtr64.data(),
+                              sizeof(int64_t) * csrRowPtr64.size(), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_colInd, csrColInd64.data(),
+                              sizeof(int64_t) * csrColInd64.size(), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_vals, csrVal.data(),
+                              sizeof(float) * csrVal.size(), cudaMemcpyHostToDevice));
 
         CUSPARSE_CHECK(cusparseCreateCsr(
             &A_, ssm_A.rows(), ssm_A.cols(), ssm_A.nnz(),
-            d_jc_, d_ir_, d_vals_, CUSPARSE_INDEX_64I, CUSPARSE_INDEX_64I,
+            d_rowPtr, d_colInd, d_vals, CUSPARSE_INDEX_64I, CUSPARSE_INDEX_64I,
             CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
     }
 
@@ -63,20 +91,20 @@ public:
         {
             CUSPARSE_CHECK(cusparseDestroySpMat(A_));
         }
-        if (d_jc_)
+        if (d_rowPtr)
         {
-            CUDA_CHECK(cudaFree(d_jc_));
-            d_jc_ = nullptr;
+            CUDA_CHECK(cudaFree(d_rowPtr));
+            d_rowPtr = nullptr;
         }
-        if (d_ir_)
+        if (d_colInd)
         {
-            CUDA_CHECK(cudaFree(d_ir_));
-            d_ir_ = nullptr;
+            CUDA_CHECK(cudaFree(d_colInd));
+            d_colInd = nullptr;
         }
-        if (d_vals_)
+        if (d_vals)
         {
-            CUDA_CHECK(cudaFree(d_vals_));
-            d_vals_ = nullptr;
+            CUDA_CHECK(cudaFree(d_vals));
+            d_vals = nullptr;
         }
     }
 
@@ -86,9 +114,9 @@ public:
     }
 
 private:
-    int64_t *d_jc_ = nullptr;
-    int64_t *d_ir_ = nullptr;
-    float *d_vals_ = nullptr;
+    int64_t *d_rowPtr = nullptr;
+    int64_t *d_colInd = nullptr;
+    float *d_vals = nullptr;
     cusparseSpMatDescr_t A_{};
 };
 
@@ -103,7 +131,7 @@ int main(int argc, char *argv[])
         }
         else if (argc == 4)
         {
-            s = std::atoi(argv[2]);
+            s = std::atoi(argv[3]);
         }
         else
         {
@@ -140,18 +168,17 @@ int main(int argc, char *argv[])
     CUSPARSE_CHECK(cusparseCreate(&cusparseH));
 
     const std::string A_file = argv[1];
-    SuiteSparseMatrix ssm_A(A_file);
+    SuiteSparseMatrix ssm_A(A_file, {"Problem"}, "A");
     DeviceSuiteSparseMatrix A{ssm_A};
-
-    const std::string L_file = argv[1];
-    SuiteSparseMatrix ssm_L(L_file);
-    DeviceSuiteSparseMatrix L{ssm_L};
-
     const int n = ssm_A.rows();
+
+    const std::string L_file = argv[2];
+    SuiteSparseMatrix ssm_L(L_file, {}, "L");
+    DeviceSuiteSparseMatrix L{ssm_L};
 
     cusparseDnMatDescr_t X;
     float *d_X = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_X, sizeof(float) * n * s));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * n * s));
     CUSPARSE_CHECK(cusparseCreateDnMat(&X, n, s, n, d_X, CUDA_R_32F, CUSPARSE_ORDER_COL));
 
     cusparseDnMatDescr_t B;

@@ -55,7 +55,7 @@ int main(int argc, char *argv[])
     CUSPARSE_CHECK(cusparseCreate(&cusparseH));
 
     const std::string matrix_file = argv[1];
-    SuiteSparseMatrix ssm(matrix_file);
+    SuiteSparseMatrix ssm(matrix_file, {"Problem"}, "A");
 
     int64_t *jc_d = nullptr;
     int64_t *ir_d = nullptr;
