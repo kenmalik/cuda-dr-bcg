@@ -562,13 +562,14 @@ void dr_bcg::quadratic_form(cublasHandle_t &cublasH,
     constexpr float alpha = 1;
     constexpr float beta = 0;
 
-    constexpr cusparseOperation_t X_transpose = CUSPARSE_OPERATION_TRANSPOSE;
     constexpr cusparseOperation_t A_transpose =
+        CUSPARSE_OPERATION_NON_TRANSPOSE;
+    constexpr cusparseOperation_t X_transpose =
         CUSPARSE_OPERATION_NON_TRANSPOSE;
     constexpr cudaDataType compute_type = CUDA_R_32F;
     constexpr cusparseSpMMAlg_t algorithm_type = CUSPARSE_SPMM_ALG_DEFAULT;
 
-    // Ax
+    // work = A * x
     cusparseDnMatDescr_t work_descr;
     CUSPARSE_CHECK(cusparseCreateDnMat(&work_descr, n, s, n,
                                        reinterpret_cast<void *>(d_work),
@@ -577,14 +578,14 @@ void dr_bcg::quadratic_form(cublasHandle_t &cublasH,
     void *buffer = nullptr;
     size_t buffer_size = 0;
     CUSPARSE_CHECK(cusparseSpMM_bufferSize(
-        cusparseH, X_transpose, A_transpose, &alpha, A, X, &beta, work_descr,
+        cusparseH, A_transpose, X_transpose, &alpha, A, X, &beta, work_descr,
         compute_type, algorithm_type, &buffer_size));
 
     if (buffer_size > 0) {
         CUDA_CHECK(cudaMalloc(&buffer, buffer_size));
     }
 
-    CUSPARSE_CHECK(cusparseSpMM(cusparseH, X_transpose, A_transpose, &alpha, A,
+    CUSPARSE_CHECK(cusparseSpMM(cusparseH, A_transpose, X_transpose, &alpha, A,
                                 X, &beta, work_descr, compute_type,
                                 algorithm_type, buffer));
 
@@ -594,7 +595,7 @@ void dr_bcg::quadratic_form(cublasHandle_t &cublasH,
 
     CUSPARSE_CHECK(cusparseDestroyDnMat(work_descr));
 
-    // x^TAx
+    // y = x^T * A
     float *d_X = nullptr;
     CUSPARSE_CHECK(cusparseDnMatGetValues(X, reinterpret_cast<void **>(&d_X)));
 
@@ -799,26 +800,9 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
 
         // xi = (s' * A * s)^-1
         get_xi(cublasH, cusolverH, cusolverParams, cusparseH, A, n, s, d);
-        check_non_finite(d.xi, s * s, "get_xi: iteration " + std::to_string(i));
 
         // X = X + s * xi * sigma
         get_next_X(cublasH, n, s, d.s, d.xi, d.temp, d.sigma, d_X);
-        try {
-            check_non_finite(d_X, n * s, "get_next_X: iteration " + std::to_string(i));
-        } catch (const std::runtime_error &e) {
-            // std::cerr << "s" << std::endl;
-            // print_device_matrix(d.s, n, s);
-            // std::cerr << "xi" << std::endl;
-            // print_device_matrix(d.xi, s, s);
-            // std::cerr << "sigma" << std::endl;
-            // print_device_matrix(d.sigma, s, s);
-        }
-        if (i == 10) {
-            std::cerr << "zeta" << std::endl;
-            print_device_matrix(d.zeta, s, s);
-            std::cerr << "sigma" << std::endl;
-            print_device_matrix(d.sigma, s, s);
-        }
 
         // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
         float relative_residual_norm;
@@ -836,18 +820,11 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
             // [w, zeta] = qr(w - (L^-1) * A * s * xi, 'econ')
             get_w_zeta(cusolverH, cusolverParams, cublasH, cusparseH, n, s, d,
                        A, L);
-            check_non_finite(d.w, n * s,
-                      "get_w_zeta: w: iteration " + std::to_string(i));
-            check_non_finite(d.zeta, s * s,
-                      "get_w_zeta: w: iteration " + std::to_string(i));
 
             // s = (L^-1)' * w + s * zeta'
             get_s(cusparseH, cublasH, n, s, d, L);
-            check_non_finite(d.s, n * s, "get_s: iteration " + std::to_string(i));
 
             get_sigma(cublasH, s, d);
-            check_non_finite(d.sigma, s * s,
-                      "get_sigma: iteration " + std::to_string(i));
         }
     }
 
