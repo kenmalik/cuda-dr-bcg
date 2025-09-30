@@ -2,7 +2,13 @@
 #include <iostream>
 #include <sstream>
 #include <fstream>
+
 #include <nvtx3/nvtx3.hpp>
+
+#include <cuda/std/cmath>
+
+#include <thrust/find.h>
+#include <thrust/device_vector.h>
 
 #include "dr_bcg/helper.h"
 
@@ -191,6 +197,13 @@ void fill_spd(float *mat, const int n, const std::optional<int> seed)
     CUBLAS_CHECK(cublasDestroy_v2(cublasH));
 }
 
+struct is_nan {
+    __device__
+    bool operator()(const float x) {
+        return cuda::std::isnan(x);
+    }
+};
+
 /**
  * @brief Checks for NaN values in a device array and throws an exception if any are found.
  *
@@ -206,14 +219,11 @@ void fill_spd(float *mat, const int n, const std::optional<int> seed)
  */
 void check_nan(const float *d_arr, size_t size, std::string step)
 {
-    std::vector<float> h_arr(size);
-    CUDA_CHECK(cudaMemcpy(h_arr.data(), d_arr, sizeof(float) * size, cudaMemcpyDeviceToHost));
-    for (size_t i = 0; i < size; ++i)
+    thrust::device_ptr<const float> begin{d_arr};
+    auto first_nan = thrust::find_if(begin, begin + size, is_nan());
+    if (first_nan != begin + size)
     {
-        if (std::isnan(h_arr[i]))
-        {
-            throw std::runtime_error("NaN detected after step: " + step);
-        }
+        throw std::runtime_error("NaN detected after step: " + step);
     }
 }
 
