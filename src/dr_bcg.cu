@@ -799,12 +799,12 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
 
         // xi = (s' * A * s)^-1
         get_xi(cublasH, cusolverH, cusolverParams, cusparseH, A, n, s, d);
-        check_nan(d.xi, s * s, "get_xi: iteration " + std::to_string(i));
+        check_non_finite(d.xi, s * s, "get_xi: iteration " + std::to_string(i));
 
         // X = X + s * xi * sigma
         get_next_X(cublasH, n, s, d.s, d.xi, d.temp, d.sigma, d_X);
         try {
-            check_nan(d_X, n * s, "get_next_X: iteration " + std::to_string(i));
+            check_non_finite(d_X, n * s, "get_next_X: iteration " + std::to_string(i));
         } catch (const std::runtime_error &e) {
             // std::cerr << "s" << std::endl;
             // print_device_matrix(d.s, n, s);
@@ -836,17 +836,17 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
             // [w, zeta] = qr(w - (L^-1) * A * s * xi, 'econ')
             get_w_zeta(cusolverH, cusolverParams, cublasH, cusparseH, n, s, d,
                        A, L);
-            check_nan(d.w, n * s,
+            check_non_finite(d.w, n * s,
                       "get_w_zeta: w: iteration " + std::to_string(i));
-            check_nan(d.zeta, s * s,
+            check_non_finite(d.zeta, s * s,
                       "get_w_zeta: w: iteration " + std::to_string(i));
 
             // s = (L^-1)' * w + s * zeta'
             get_s(cusparseH, cublasH, n, s, d, L);
-            check_nan(d.s, n * s, "get_s: iteration " + std::to_string(i));
+            check_non_finite(d.s, n * s, "get_s: iteration " + std::to_string(i));
 
             get_sigma(cublasH, s, d);
-            check_nan(d.sigma, s * s,
+            check_non_finite(d.sigma, s * s,
                       "get_sigma: iteration " + std::to_string(i));
         }
     }

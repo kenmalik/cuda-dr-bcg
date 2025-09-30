@@ -28,7 +28,7 @@ void print_device_matrix(const float *d_mat, const int rows, const int cols);
 
 void print_sparse_matrix(const cusparseHandle_t &cusparseH, const cusparseSpMatDescr_t &sp_mat);
 
-void check_nan(const float *d_arr, size_t size, std::string step);
+void check_non_finite(const float *d_arr, size_t size, std::string step);
 
 std::vector<double> read_matrix_bin(std::string filename);
 
