@@ -310,13 +310,7 @@ TEST(QR_Factorization, OutputCorrect) {
     CUDA_CHECK(cudaMemcpy(d_A, h_A_in.data(), sizeof(float) * h_A_in.size(),
                           cudaMemcpyHostToDevice));
 
-    // Operation
     qr_factorization(cusolverH, cusolverParams, d_Q, d_R, m, n, d_A);
-
-    std::cerr << "Q:" << std::endl;
-    print_device_matrix(d_Q, m, n);
-    std::cerr << "R:" << std::endl;
-    print_device_matrix(d_R, n, n);
 
     // Test A = Q * R
     CUDA_CHECK(cudaMemset(d_A, 0, sizeof(float) * m * n));
@@ -329,17 +323,11 @@ TEST(QR_Factorization, OutputCorrect) {
     CUDA_CHECK(cudaMemcpy(h_A_out.data(), d_A, sizeof(float) * h_A_out.size(),
                           cudaMemcpyDeviceToHost));
 
-    std::cerr << "Resulting A:" << std::endl;
-    print_matrix(h_A_out.data(), m, n);
-    std::cerr << "Expected A:" << std::endl;
-    print_matrix(h_A_in.data(), m, n);
-
     for (int i = 0; i < h_A_in.size(); i++) {
         float diff = std::abs(h_A_in.at(i) - h_A_out.at(i));
         ASSERT_LT(diff, tolerance);
     }
 
-    // Free resources
     CUDA_CHECK(cudaFree(d_A));
     CUDA_CHECK(cudaFree(d_Q));
     CUDA_CHECK(cudaFree(d_R));
