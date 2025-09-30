@@ -187,7 +187,7 @@ void fill_spd(float *mat, const int n, const std::optional<int> seed) {
     CUBLAS_CHECK(cublasDestroy_v2(cublasH));
 }
 
-struct is_nan {
+struct is_non_finite {
     __device__ bool operator()(const float x) {
         return !cuda::std::isfinite(x);
     }
@@ -209,10 +209,10 @@ struct is_nan {
  */
 void check_non_finite(const float *d_arr, size_t size, std::string step) {
     thrust::device_ptr<const float> begin{d_arr};
-    auto first_nan = thrust::find_if(begin, begin + size, is_nan());
+    auto first_nan = thrust::find_if(begin, begin + size, is_non_finite{});
     if (first_nan != begin + size) {
         throw std::runtime_error(
-            "NaN detected after step: " + step + " at value " +
+            "Non-finite detected after step: " + step + " at value " +
             std::to_string(thrust::distance(begin, first_nan)) + " (" +
             std::to_string(*first_nan) + ")");
     }
