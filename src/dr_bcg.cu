@@ -800,9 +800,11 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
 
         // xi = (s' * A * s)^-1
         get_xi(cublasH, cusolverH, cusolverParams, cusparseH, A, n, s, d);
+        check_non_finite(d.xi, n * s, "get_xi: iteration " + std::to_string(i));
 
         // X = X + s * xi * sigma
         get_next_X(cublasH, n, s, d.s, d.xi, d.temp, d.sigma, d_X);
+        check_non_finite(d_X, n * s, "get_next_X: iteration " + std::to_string(i));
 
         // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
         float relative_residual_norm;
@@ -820,11 +822,15 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
             // [w, zeta] = qr(w - (L^-1) * A * s * xi, 'econ')
             get_w_zeta(cusolverH, cusolverParams, cublasH, cusparseH, n, s, d,
                        A, L);
+            check_non_finite(d.w, n * s, "get_w_zeta (w): iteration " + std::to_string(i));
+            check_non_finite(d.zeta, s * s, "get_w_zeta (zeta): iteration " + std::to_string(i));
 
             // s = (L^-1)' * w + s * zeta'
             get_s(cusparseH, cublasH, n, s, d, L);
+            check_non_finite(d.s, n * s, "get_s: iteration " + std::to_string(i));
 
             get_sigma(cublasH, s, d);
+            check_non_finite(d.sigma, s * s, "get_sigma: iteration " + std::to_string(i));
         }
     }
 
