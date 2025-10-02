@@ -9,17 +9,10 @@
 #include <mat_utils/mat_reader.h>
 #include <mat_utils/mat_writer.h>
 
+#include <thrust/device_vector.h>
+
 #include "dr_bcg/dr_bcg.h"
 #include "dr_bcg/helper.h"
-
-__global__ void set_val(float *A_d, float val, size_t num_elements)
-{
-    const int idx = blockIdx.x * blockDim.y + threadIdx.x;
-    if (idx < num_elements)
-    {
-        A_d[idx] = val;
-    }
-}
 
 class DeviceSuiteSparseMatrix
 {
@@ -162,29 +155,29 @@ int main(int argc, char *argv[])
     cusparseHandle_t cusparseH;
     CUSPARSE_CHECK(cusparseCreate(&cusparseH));
 
+    // Read A
     const std::string A_file = argv[1];
     mat_utils::MatReader ssm_A(A_file, {"Problem"}, "A");
     DeviceSuiteSparseMatrix A{ssm_A};
     const int n = ssm_A.rows();
 
+    // Read L
     const std::string L_file = argv[2];
     mat_utils::MatReader ssm_L(L_file, {}, "L");
     DeviceSuiteSparseMatrix L{ssm_L};
 
+    // X = 0
+    thrust::device_vector<float> X_vec(n * s);
+    thrust::fill(X_vec.begin(), X_vec.end(), 0);
+    float *d_X = thrust::raw_pointer_cast(X_vec.data());
     cusparseDnMatDescr_t X;
-    float *d_X = nullptr;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_X), sizeof(float) * n * s));
     CUSPARSE_CHECK(cusparseCreateDnMat(&X, n, s, n, d_X, CUDA_R_32F, CUSPARSE_ORDER_COL));
 
+    // B = 1
+    thrust::device_vector<float> B_vec(n * s);
+    thrust::fill(B_vec.begin(), B_vec.end(), 1);
+    float *d_B = thrust::raw_pointer_cast(B_vec.data());
     cusparseDnMatDescr_t B;
-    float *d_B = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_B, sizeof(float) * n * s));
-
-    constexpr int block_size = 256;
-    const size_t num_elements = n * s;
-    const size_t num_blocks = (num_elements + block_size - 1) / block_size;
-    set_val<<<num_blocks, block_size>>>(d_B, 1, num_elements);
-
     CUSPARSE_CHECK(cusparseCreateDnMat(&B, n, s, n, d_B, CUDA_R_32F, CUSPARSE_ORDER_COL));
 
     constexpr float tolerance = std::numeric_limits<float>::epsilon();
