@@ -7,6 +7,10 @@
 #include "dr_bcg/dr_bcg.h"
 #include "dr_bcg/helper.h"
 
+#include <thrust/device_vector.h>
+#include <thrust/host_vector.h>
+#include <thrust/mismatch.h>
+
 TEST(QuadraticForm, ScalarOutputCorrect) {
     cublasHandle_t cublasH;
 
@@ -279,63 +283,54 @@ TEST(ThinQR, OutputCorrect) {
 #else
 
 TEST(QR_Factorization, OutputCorrect) {
-    constexpr float tolerance = 0.001;
-
     constexpr int m = 8;
     constexpr int n = 4;
 
+    cusolverDnHandle_t cusolverH;
+    cusolverDnParams_t params;
+    CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
+    CUSOLVER_CHECK(cusolverDnCreateParams(&params));
+
+    thrust::device_vector<float> A(m * n);
+    thrust::fill(A.begin(), A.end(), 1);
+    float *d_A = thrust::raw_pointer_cast(A.data());
+
+    thrust::device_vector<float> Q(m * n);
+    float *d_Q = thrust::raw_pointer_cast(Q.data());
+
+    thrust::device_vector<float> R(n * n);
+    float *d_R = thrust::raw_pointer_cast(R.data());
+
+    qr_factorization(cusolverH, params, d_Q, d_R, m, n, d_A);
+    print_device_matrix(d_R, n, n);
+
+    // Verification that A = Q * R
     cublasHandle_t cublasH;
     CUBLAS_CHECK(cublasCreate_v2(&cublasH));
 
-    cusolverDnHandle_t cusolverH;
-    cusolverDnParams_t cusolverParams;
-    CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
-    CUSOLVER_CHECK(cusolverDnCreateParams(&cusolverParams));
-
-    float *d_A = nullptr;
-    float *d_Q = nullptr;
-    float *d_R = nullptr;
-
-    std::vector<float> h_A_in(m * n);
-    fill_random(h_A_in.data(), m, n);
-    std::vector<float> h_A_out(m * n);
-
-    CUDA_CHECK(
-        cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * m * n));
-    CUDA_CHECK(
-        cudaMalloc(reinterpret_cast<void **>(&d_Q), sizeof(float) * m * n));
-    CUDA_CHECK(
-        cudaMalloc(reinterpret_cast<void **>(&d_R), sizeof(float) * n * n));
-
-    CUDA_CHECK(cudaMemcpy(d_A, h_A_in.data(), sizeof(float) * h_A_in.size(),
-                          cudaMemcpyHostToDevice));
-
-    qr_factorization(cusolverH, cusolverParams, d_Q, d_R, m, n, d_A);
-
-    // Test A = Q * R
-    CUDA_CHECK(cudaMemset(d_A, 0, sizeof(float) * m * n));
+    thrust::device_vector<float> res(m * n);
+    float *d_res = thrust::raw_pointer_cast(res.data());
 
     constexpr float alpha = 1;
     constexpr float beta = 0;
     CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, n,
-                                &alpha, d_Q, m, d_R, n, &beta, d_A, m));
+                                &alpha, d_Q, m, d_R, n, &beta, d_res, m));
 
-    CUDA_CHECK(cudaMemcpy(h_A_out.data(), d_A, sizeof(float) * h_A_out.size(),
-                          cudaMemcpyDeviceToHost));
+    thrust::host_vector<float> h_A = A;
+    thrust::host_vector<float> h_res = res;
 
-    for (int i = 0; i < h_A_in.size(); i++) {
-        float diff = std::abs(h_A_in.at(i) - h_A_out.at(i));
-        ASSERT_LT(diff, tolerance);
-    }
+    auto close_match = [](float a, float b) {
+        constexpr float tolerance = 1e-6;
+        return std::abs(a - b) <= tolerance;
+    };
+    auto [A_diff, res_diff] =
+        thrust::mismatch(h_A.begin(), h_A.end(), h_res.begin(), close_match);
 
-    CUDA_CHECK(cudaFree(d_A));
-    CUDA_CHECK(cudaFree(d_Q));
-    CUDA_CHECK(cudaFree(d_R));
+    std::cerr << "Mismatch at A: " << *A_diff << std::endl;
+    std::cerr << "Mismatch at res: " << *res_diff << std::endl;
 
-    CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
-    CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
-
-    CUBLAS_CHECK(cublasDestroy_v2(cublasH));
+    ASSERT_EQ(A_diff, h_A.end());
+    ASSERT_EQ(res_diff, h_res.end());
 }
 
 #endif // DR_BCG_USE_THIN_QR
