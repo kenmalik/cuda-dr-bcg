@@ -242,9 +242,6 @@ void dr_bcg::get_s(cusparseHandle_t cusparseH, cublasHandle_t cublasH,
 
         CUSPARSE_CHECK(cusparseDestroyDnMat(sptri_temp));
         CUSPARSE_CHECK(cusparseDestroyDnMat(w_desc));
-
-        CUDA_CHECK(cudaMemcpy(d.temp, sptri_buffer, sizeof(float) * n * s,
-                              cudaMemcpyDeviceToDevice));
     }
 
     // s = sptri_buffer + temp
@@ -836,6 +833,7 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
             check_non_finite(d.s, n * s,
                              "get_s: iteration " + std::to_string(i));
 
+            // sigma = zeta * sigma
             get_sigma(cublasH, s, d);
             check_non_finite(d.sigma, s * s,
                              "get_sigma: iteration " + std::to_string(i));
