@@ -441,3 +441,82 @@ TEST(DR_BCG, OutputCorrect) {
 
     CUBLAS_CHECK(cublasDestroy_v2(cublasH));
 }
+
+TEST(SPTRI_LeftMultiply, IdentityStaysSame) {
+    cusparseHandle_t cusparseH;
+    CUSPARSE_CHECK(cusparseCreate(&cusparseH));
+
+    constexpr int m = 8;
+    constexpr int n = 4;
+
+    constexpr cudaDataType_t data_type = CUDA_R_32F;
+    constexpr cusparseOrder_t order = CUSPARSE_ORDER_COL;
+
+    constexpr cusparseIndexType_t index_type = CUSPARSE_INDEX_64I;
+    constexpr cusparseIndexBase_t base_type = CUSPARSE_INDEX_BASE_ZERO;
+
+    // A = I
+    thrust::device_vector<float> A_vals(m);
+    thrust::fill(A_vals.begin(), A_vals.end(), 1);
+
+    auto counter = thrust::make_counting_iterator<int64_t>(0);
+
+    thrust::device_vector<int64_t> A_row_offsets(m + 1);
+    thrust::copy_n(counter, A_row_offsets.size(), A_row_offsets.begin());
+    int64_t *row_offsets = thrust::raw_pointer_cast(A_row_offsets.data());
+
+    counter = thrust::make_counting_iterator<int64_t>(0);
+    thrust::device_vector<int64_t> A_col_indices(m);
+    thrust::copy_n(counter, A_col_indices.size(), A_col_indices.begin());
+    int64_t *col_indices = thrust::raw_pointer_cast(A_col_indices.data());
+
+    thrust::device_vector<float> values(m * n);
+    thrust::fill(values.begin(), values.end(), 1);
+    float *d_values = thrust::raw_pointer_cast(values.data());
+
+    cusparseSpMatDescr_t A_desc;
+    CUSPARSE_CHECK(cusparseCreateCsr(&A_desc, m, m, m, row_offsets, col_indices,
+                                     d_values, index_type, index_type,
+                                     base_type, data_type));
+
+    // B = 1
+    thrust::device_vector<float> B(m * n);
+    thrust::fill(B.begin(), B.end(), 1);
+    float *d_B = thrust::raw_pointer_cast(B.data());
+    cusparseDnMatDescr_t B_desc;
+    CUSPARSE_CHECK(
+        cusparseCreateDnMat(&B_desc, m, n, m, d_B, data_type, order));
+
+    // C initialized
+    thrust::device_vector<float> C(m * n);
+    float *d_C = thrust::raw_pointer_cast(C.data());
+    cusparseDnMatDescr_t C_desc;
+    CUSPARSE_CHECK(
+        cusparseCreateDnMat(&C_desc, m, n, m, d_C, data_type, order));
+
+    constexpr cusparseOperation_t op_type = CUSPARSE_OPERATION_NON_TRANSPOSE;
+    sptri_left_multiply(cusparseH, C_desc, op_type, A_desc, B_desc);
+
+    // Verify C == B
+    thrust::host_vector<float> expected = B;
+    thrust::host_vector<float> got = C;
+
+    auto close_match = [](float a, float b) {
+        constexpr float tolerance = 1e-6;
+        return std::abs(a - b) <= tolerance;
+    };
+    auto [expected_diff, got_diff] =
+        thrust::mismatch(expected.begin(), expected.end(), got.begin(), close_match);
+
+    std::cerr << "Mismatch at A: " << *expected_diff << std::endl;
+    std::cerr << "Mismatch at res: " << *got_diff << std::endl;
+
+    ASSERT_EQ(expected_diff, expected.end());
+    ASSERT_EQ(got_diff, got.end());
+
+    CUSPARSE_CHECK(cusparseDestroySpMat(A_desc));
+    CUSPARSE_CHECK(cusparseDestroyDnMat(B_desc));
+    CUSPARSE_CHECK(cusparseDestroyDnMat(C_desc));
+
+    CUSPARSE_CHECK(cusparseDestroy(cusparseH));
+}
