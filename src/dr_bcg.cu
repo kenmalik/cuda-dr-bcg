@@ -422,7 +422,7 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
         cusparseCreateDnMat(&R, n, s, n, d_R, CUDA_R_32F, CUSPARSE_ORDER_COL));
 
     // R = B - AX
-    get_R(cublasH, cusparseH, R, A, X, B);
+    get_R(cusparseH, R, A, X, B);
 
 #ifdef USE_THIN_QR
     thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.sigma, n, s, d_R);
@@ -485,9 +485,9 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
     return CUSOLVER_STATUS_SUCCESS;
 }
 
-void dr_bcg::get_R(cublasHandle_t &cublasH, cusparseHandle_t &cusparseH,
-                   cusparseDnMatDescr_t &R, cusparseSpMatDescr_t &A,
-                   cusparseDnMatDescr_t &X, cusparseDnMatDescr_t &B) {
+void dr_bcg::get_R(cusparseHandle_t &cusparseH, cusparseDnMatDescr_t &R,
+                   cusparseSpMatDescr_t &A, cusparseDnMatDescr_t &X,
+                   cusparseDnMatDescr_t &B) {
     NVTX3_FUNC_RANGE();
 
     constexpr float alpha = -1;
@@ -753,7 +753,7 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
         cusparseCreateDnMat(&R, n, s, n, d_R, CUDA_R_32F, CUSPARSE_ORDER_COL));
 
     // R = B - AX
-    get_R(cublasH, cusparseH, R, A, X, B);
+    get_R(cusparseH, R, A, X, B);
 
     {
         // [w, sigma] = qr(L^-1 * R,'econ')

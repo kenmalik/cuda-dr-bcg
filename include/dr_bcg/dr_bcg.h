@@ -131,7 +131,6 @@ namespace dr_bcg
     void get_R(cublasHandle_t &cublasH, float *h_R, const int n, const int m, const float *A, const float *X, const float *B);
 
     void get_R(
-        cublasHandle_t &cublasH,
         cusparseHandle_t &cusparseH,
         cusparseDnMatDescr_t &R,
         cusparseSpMatDescr_t &A,
