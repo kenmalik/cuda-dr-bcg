@@ -493,37 +493,39 @@ void dr_bcg::get_R(cublasHandle_t &cublasH, cusparseHandle_t &cusparseH,
     constexpr float alpha = -1;
     constexpr float beta = 1;
 
-    float *d_R = nullptr;
-    int64_t n = 0;
-    int64_t s = 0;
-    int64_t ld = 0;
-    cudaDataType type;
-    cusparseOrder_t order;
-    CUSPARSE_CHECK(cusparseDnMatGet(
-        R, &n, &s, &ld, reinterpret_cast<void **>(&d_R), &type, &order));
-    float *d_B = nullptr;
-    CUSPARSE_CHECK(cusparseDnMatGetValues(B, reinterpret_cast<void **>(&d_B)));
-
-    CUDA_CHECK(
-        cudaMemcpy(d_R, d_B, sizeof(float) * n * s, cudaMemcpyDeviceToDevice));
-
-    constexpr cusparseOperation_t transpose = CUSPARSE_OPERATION_NON_TRANSPOSE;
-    constexpr cudaDataType compute_type = CUDA_R_32F;
-    constexpr cusparseSpMMAlg_t algorithm_type = CUSPARSE_SPMM_ALG_DEFAULT;
-
-    void *buffer = nullptr;
     size_t buffer_size = 0;
-    CUSPARSE_CHECK(cusparseSpMM_bufferSize(cusparseH, transpose, transpose,
-                                           &alpha, A, X, &beta, R, compute_type,
-                                           algorithm_type, &buffer_size));
+    void *buffer = nullptr;
+
+    constexpr cudaDataType_t data_type = CUDA_R_32F;
+    constexpr cusparseOperation_t op_type = CUSPARSE_OPERATION_NON_TRANSPOSE;
+    constexpr cusparseSpMMAlg_t alg_type = CUSPARSE_SPMM_ALG_DEFAULT;
+
+    // Copy R = B for R's reuse in SpMM
+    int64_t B_rows = 0;
+    int64_t B_cols = 0;
+    int64_t B_ld = 0;
+    void *d_B = nullptr;
+    cudaDataType B_type;
+    cusparseOrder_t B_order;
+    CUSPARSE_CHECK(
+        cusparseDnMatGet(B, &B_rows, &B_cols, &B_ld, &d_B, &B_type, &B_order));
+
+    void *d_R = nullptr;
+    CUSPARSE_CHECK(cusparseDnMatGetValues(R, &d_R));
+    CUDA_CHECK(cudaMemcpy(d_R, d_B, sizeof(float) * B_rows * B_cols,
+                          cudaMemcpyDeviceToDevice));
+
+    // R = (-1)AX + (1)R
+    CUSPARSE_CHECK(cusparseSpMM_bufferSize(cusparseH, op_type, op_type, &alpha,
+                                           A, X, &beta, R, data_type, alg_type,
+                                           &buffer_size));
 
     if (buffer_size > 0) {
         CUDA_CHECK(cudaMalloc(&buffer, buffer_size));
     }
 
-    CUSPARSE_CHECK(cusparseSpMM(cusparseH, transpose, transpose, &alpha, A, X,
-                                &beta, R, compute_type, algorithm_type,
-                                buffer));
+    CUSPARSE_CHECK(cusparseSpMM(cusparseH, op_type, op_type, &alpha, A, X,
+                                &beta, R, data_type, alg_type, buffer));
 
     if (buffer) {
         CUDA_CHECK(cudaFree(buffer));
@@ -718,8 +720,8 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
                float tolerance, int max_iterations, int *iterations) {
     NVTX3_FUNC_RANGE();
 
-    cusparseFillMode_t fill = CUSPARSE_FILL_MODE_LOWER;    // or UPPER
-    cusparseDiagType_t diag = CUSPARSE_DIAG_TYPE_NON_UNIT; // or UNIT
+    cusparseFillMode_t fill = CUSPARSE_FILL_MODE_LOWER;
+    cusparseDiagType_t diag = CUSPARSE_DIAG_TYPE_NON_UNIT;
     cusparseSpMatSetAttribute(L, CUSPARSE_SPMAT_FILL_MODE, &fill, sizeof(fill));
     cusparseSpMatSetAttribute(L, CUSPARSE_SPMAT_DIAG_TYPE, &diag, sizeof(diag));
 
@@ -804,7 +806,8 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
 
         // X = X + s * xi * sigma
         get_next_X(cublasH, n, s, d.s, d.xi, d.temp, d.sigma, d_X);
-        check_non_finite(d_X, n * s, "get_next_X: iteration " + std::to_string(i));
+        check_non_finite(d_X, n * s,
+                         "get_next_X: iteration " + std::to_string(i));
 
         // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
         float relative_residual_norm;
@@ -822,15 +825,20 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
             // [w, zeta] = qr(w - (L^-1) * A * s * xi, 'econ')
             get_w_zeta(cusolverH, cusolverParams, cublasH, cusparseH, n, s, d,
                        A, L);
-            check_non_finite(d.w, n * s, "get_w_zeta (w): iteration " + std::to_string(i));
-            check_non_finite(d.zeta, s * s, "get_w_zeta (zeta): iteration " + std::to_string(i));
+            check_non_finite(d.w, n * s,
+                             "get_w_zeta (w): iteration " + std::to_string(i));
+            check_non_finite(d.zeta, s * s,
+                             "get_w_zeta (zeta): iteration " +
+                                 std::to_string(i));
 
             // s = (L^-1)' * w + s * zeta'
             get_s(cusparseH, cublasH, n, s, d, L);
-            check_non_finite(d.s, n * s, "get_s: iteration " + std::to_string(i));
+            check_non_finite(d.s, n * s,
+                             "get_s: iteration " + std::to_string(i));
 
             get_sigma(cublasH, s, d);
-            check_non_finite(d.sigma, s * s, "get_sigma: iteration " + std::to_string(i));
+            check_non_finite(d.sigma, s * s,
+                             "get_sigma: iteration " + std::to_string(i));
         }
     }
 
