@@ -96,6 +96,84 @@ TEST(QuadraticForm, MatrixOutputCorrect) {
     ASSERT_EQ(h_y, expected);
 }
 
+TEST(QuadraticForm, SparseIdentityCheck) {
+    constexpr int m = 8;
+    constexpr int n = 4;
+
+    cublasHandle_t cublasH;
+    CUBLAS_CHECK(cublasCreate_v2(&cublasH));
+
+    cusparseHandle_t cusparseH;
+    CUSPARSE_CHECK(cusparseCreate(&cusparseH));
+
+    // A = I
+    constexpr cudaDataType_t data_type = CUDA_R_32F;
+    constexpr cusparseOrder_t order = CUSPARSE_ORDER_COL;
+    constexpr cusparseIndexType_t index_type = CUSPARSE_INDEX_64I;
+    constexpr cusparseIndexBase_t base_type = CUSPARSE_INDEX_BASE_ZERO;
+
+    thrust::device_vector<float> A_vals(m);
+    thrust::fill(A_vals.begin(), A_vals.end(), 1);
+
+    auto counter = thrust::make_counting_iterator<int64_t>(0);
+
+    thrust::device_vector<int64_t> A_row_offsets(m + 1);
+    thrust::copy_n(counter, A_row_offsets.size(), A_row_offsets.begin());
+    int64_t *row_offsets = thrust::raw_pointer_cast(A_row_offsets.data());
+
+    counter = thrust::make_counting_iterator<int64_t>(0);
+    thrust::device_vector<int64_t> A_col_indices(m);
+    thrust::copy_n(counter, A_col_indices.size(), A_col_indices.begin());
+    int64_t *col_indices = thrust::raw_pointer_cast(A_col_indices.data());
+
+    thrust::device_vector<float> values(m * n);
+    thrust::fill(values.begin(), values.end(), 1);
+    float *d_values = thrust::raw_pointer_cast(values.data());
+
+    cusparseSpMatDescr_t A_desc;
+    CUSPARSE_CHECK(cusparseCreateCsr(&A_desc, m, m, m, row_offsets, col_indices,
+                                     d_values, index_type, index_type,
+                                     base_type, data_type));
+
+    // X = 1
+    thrust::device_vector<float> X(m * n);
+    thrust::fill(X.begin(), X.end(), 1);
+    float *d_X = thrust::raw_pointer_cast(X.data());
+    cusparseDnMatDescr_t X_desc;
+    CUSPARSE_CHECK(
+        cusparseCreateDnMat(&X_desc, m, n, m, d_X, data_type, order));
+
+    float *d_work = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_work, sizeof(float) * m * n));
+
+    thrust::device_vector<float> Y(n * n);
+    float *d_Y = thrust::raw_pointer_cast(Y.data());
+
+    dr_bcg::quadratic_form(cublasH, cusparseH, m, n, X_desc, A_desc, d_work,
+                           d_Y);
+
+    CUDA_CHECK(cudaFree(d_work));
+    CUBLAS_CHECK(cublasDestroy(cublasH));
+
+    // Expected = 1_{n * n} * m
+    thrust::host_vector<float> got = Y;
+    thrust::host_vector<float> expected(n * n);
+    thrust::fill(expected.begin(), expected.end(), m);
+
+    auto close_match = [](float a, float b) {
+        constexpr float tolerance = 1e-6;
+        return std::abs(a - b) <= tolerance;
+    };
+    auto [expected_diff, got_diff] = thrust::mismatch(
+        expected.begin(), expected.end(), got.begin(), close_match);
+
+    std::cerr << "Mismatch at A: " << *expected_diff << std::endl;
+    std::cerr << "Mismatch at res: " << *got_diff << std::endl;
+
+    ASSERT_EQ(expected_diff, expected.end());
+    ASSERT_EQ(got_diff, got.end());
+}
+
 TEST(Residual, OutputCorrect) {
     constexpr int m = 3;
 
@@ -505,8 +583,8 @@ TEST(SPTRI_LeftMultiply, IdentityStaysSame) {
         constexpr float tolerance = 1e-6;
         return std::abs(a - b) <= tolerance;
     };
-    auto [expected_diff, got_diff] =
-        thrust::mismatch(expected.begin(), expected.end(), got.begin(), close_match);
+    auto [expected_diff, got_diff] = thrust::mismatch(
+        expected.begin(), expected.end(), got.begin(), close_match);
 
     std::cerr << "Mismatch at A: " << *expected_diff << std::endl;
     std::cerr << "Mismatch at res: " << *got_diff << std::endl;
