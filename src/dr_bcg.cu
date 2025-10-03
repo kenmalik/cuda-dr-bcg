@@ -328,9 +328,9 @@ void dr_bcg::get_next_X(cublasHandle_t &cublasH, const int n, const int s,
     constexpr float beta = 1;
     CUBLAS_CHECK(cublasStrmm_v2(
         cublasH, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N,
-        CUBLAS_DIAG_NON_UNIT, s, s, &alpha, d_sigma, s, d_xi, s, d_temp, s));
+        CUBLAS_DIAG_NON_UNIT, s, s, &alpha, d_sigma, s, d_xi, s, d_temp, n));
     CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, s, s,
-                                &alpha, d_s, n, d_temp, s, &beta, d_X, n));
+                                &alpha, d_s, n, d_temp, n, &beta, d_X, n));
 }
 
 /**
