@@ -799,7 +799,7 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
 
         // xi = (s' * A * s)^-1
         get_xi(cublasH, cusolverH, cusolverParams, cusparseH, A, n, s, d);
-        check_non_finite(d.xi, n * s, "get_xi: iteration " + std::to_string(i));
+        check_non_finite(d.xi, s * s, "get_xi: iteration " + std::to_string(i));
 
         // X = X + s * xi * sigma
         get_next_X(cublasH, n, s, d.s, d.xi, d.temp, d.sigma, d_X);
