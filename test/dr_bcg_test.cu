@@ -221,6 +221,50 @@ TEST(Residual, OutputCorrect) {
     CUDA_CHECK(cudaFree(d_X));
 }
 
+TEST(InvertSquareMatrix, TwoByTwoMatrix) {
+    constexpr int m = 2;
+
+    cusolverDnHandle_t cusolverH;
+    CUSOLVER_CHECK(cusolverDnCreate(&cusolverH))
+    cusolverDnParams_t params;
+    CUSOLVER_CHECK(cusolverDnCreateParams(&params))
+
+    std::vector<float> vals = {1, 3, 2, 4};
+    thrust::device_vector<float> A(vals.begin(), vals.end());
+    float *d_A = thrust::raw_pointer_cast(A.data());
+
+    std::cerr << "before" << std::endl;
+    print_device_matrix(d_A, m, m);
+
+    invert_square_matrix(cusolverH, params, d_A, m);
+
+    std::vector<float> expected_vals = {-2, 1.5f, 1, -0.5f};
+    thrust::host_vector<float> expected(expected_vals.begin(),
+                                        expected_vals.end());
+    thrust::host_vector<float> got = A;
+
+    auto close_match = [](float a, float b) {
+        constexpr float tolerance = 1e-6;
+        return std::abs(a - b) <= tolerance;
+    };
+    auto [expected_diff, got_diff] = thrust::mismatch(
+        expected.begin(), expected.end(), got.begin(), close_match);
+
+    std::cerr << "Mismatch at A: " << *expected_diff << std::endl;
+    std::cerr << "Mismatch at res: " << *got_diff << std::endl;
+
+    std::cerr << "after" << std::endl;
+    print_device_matrix(d_A, m, m);
+    std::cerr << "expected" << std::endl;
+    print_matrix(expected_vals.data(), m, m);
+
+    ASSERT_EQ(expected_diff, expected.end());
+    ASSERT_EQ(got_diff, got.end());
+
+    CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
+    CUSOLVER_CHECK(cusolverDnDestroyParams(params));
+}
+
 TEST(InvertSquareMatrix, DiagonalMatrix) {
     constexpr int m = 8;
 
