@@ -225,9 +225,9 @@ TEST(InvertSquareMatrix, TwoByTwoMatrix) {
     constexpr int m = 2;
 
     cusolverDnHandle_t cusolverH;
-    CUSOLVER_CHECK(cusolverDnCreate(&cusolverH))
+    CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
     cusolverDnParams_t params;
-    CUSOLVER_CHECK(cusolverDnCreateParams(&params))
+    CUSOLVER_CHECK(cusolverDnCreateParams(&params));
 
     std::vector<float> vals = {1, 3, 2, 4};
     thrust::device_vector<float> A(vals.begin(), vals.end());
