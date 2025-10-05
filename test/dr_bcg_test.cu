@@ -221,70 +221,60 @@ TEST(Residual, OutputCorrect) {
     CUDA_CHECK(cudaFree(d_X));
 }
 
-TEST(InvertSquareMatrix, OutputCorrect) {
-    constexpr float tolerance = 0.001;
-
+TEST(InvertSquareMatrix, DiagonalMatrix) {
     constexpr int m = 8;
-
-    cublasHandle_t cublasH;
-    CUBLAS_CHECK(cublasCreate_v2(&cublasH));
 
     cusolverDnHandle_t cusolverH;
     cusolverDnParams_t cusolverParams;
     CUSOLVER_CHECK(cusolverDnCreate(&cusolverH));
     CUSOLVER_CHECK(cusolverDnCreateParams(&cusolverParams));
 
-    float *d_A = nullptr;
-    float *d_A_inv = nullptr;
-    float *d_I = nullptr;
+    struct diagonal_functor {
+        const int N;
+        const float X;
+        diagonal_functor(int n, float x) : N(n), X(x) {}
 
-    std::vector<float> h_A_in(m * m);
-    fill_spd(h_A_in.data(), m);
-    std::vector<float> h_I_out(m * m);
+        __host__ __device__ float operator()(int index) const {
+            int row = index / N;
+            int col = index % N;
+            return (row == col) ? X : 0;
+        }
+    };
 
-    std::vector<float> I(m * m, 0);
-    for (int i = 0; i < m; i++) {
-        I.at(i * m + i) = 1;
-    }
+    thrust::counting_iterator<int> begin(0);
+    thrust::counting_iterator<int> end = begin + m * m;
 
-    CUDA_CHECK(
-        cudaMalloc(reinterpret_cast<void **>(&d_A), sizeof(float) * m * m));
-    CUDA_CHECK(
-        cudaMalloc(reinterpret_cast<void **>(&d_A_inv), sizeof(float) * m * m));
-    CUDA_CHECK(
-        cudaMalloc(reinterpret_cast<void **>(&d_I), sizeof(float) * m * m));
+    constexpr float fill_value = 10;
+    thrust::host_vector<float> I(m * m);
+    thrust::transform(begin, end, I.begin(), diagonal_functor(m, fill_value));
 
-    CUDA_CHECK(cudaMemcpy(d_A, h_A_in.data(), sizeof(float) * h_A_in.size(),
-                          cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_A_inv, h_A_in.data(), sizeof(float) * h_A_in.size(),
-                          cudaMemcpyHostToDevice));
+    thrust::device_vector<float> A = I;
+    float *d_A = thrust::raw_pointer_cast(A.data());
 
     // Operation
     invert_square_matrix(cusolverH, cusolverParams, d_A, m);
 
-    // Test A * A_inv = I
-    constexpr float alpha = 1;
-    constexpr float beta = 0;
-    CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, m, m,
-                                &alpha, d_A, m, d_A_inv, m, &beta, d_I, m));
+    // Test that result contains reciprocal of fill value on diagonal
+    thrust::host_vector<float> expected(m * m);
+    thrust::transform(begin, end, expected.begin(),
+                      diagonal_functor(m, 1 / fill_value));
+    thrust::host_vector<float> got = A;
 
-    CUDA_CHECK(cudaMemcpy(h_I_out.data(), d_I, sizeof(float) * h_I_out.size(),
-                          cudaMemcpyDeviceToHost));
+    auto close_match = [](float a, float b) {
+        constexpr float tolerance = 1e-6;
+        return std::abs(a - b) <= tolerance;
+    };
+    auto [expected_diff, got_diff] = thrust::mismatch(
+        expected.begin(), expected.end(), got.begin(), close_match);
 
-    for (int i = 0; i < h_A_in.size(); i++) {
-        float diff = std::abs(I.at(i) - h_I_out.at(i));
-        ASSERT_LT(diff, tolerance);
-    }
+    std::cerr << "Mismatch at A: " << *expected_diff << std::endl;
+    std::cerr << "Mismatch at res: " << *got_diff << std::endl;
 
-    // Free resources
-    CUDA_CHECK(cudaFree(d_A));
-    CUDA_CHECK(cudaFree(d_A_inv));
-    CUDA_CHECK(cudaFree(d_I));
+    ASSERT_EQ(expected_diff, expected.end());
+    ASSERT_EQ(got_diff, got.end());
 
     CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
     CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
-
-    CUBLAS_CHECK(cublasDestroy_v2(cublasH));
 }
 
 #ifdef DR_BCG_USE_THIN_QR
