@@ -273,38 +273,38 @@ void copy_upper_triangular(float *dst, float *src, const int m, const int n) {
  */
 void invert_square_matrix(cusolverDnHandle_t &cusolverH,
                           cusolverDnParams_t &params, float *d_A, const int n) {
+    constexpr cudaDataType_t data_type = CUDA_R_32F;
+
     // LU Decomposition
-    size_t workspaceInBytesOnDevice = 0;
+    size_t d_work_size = 0;
     void *d_work = nullptr;
-    size_t workspaceInBytesOnHost = 0;
+    size_t h_work_size = 0;
     void *h_work = nullptr;
 
     int info = 0;
     int *d_info = nullptr;
 
-    std::vector<int64_t> h_Ipiv(n, 0);
     int64_t *d_Ipiv = nullptr;
 
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_Ipiv),
-                          sizeof(int64_t) * h_Ipiv.size()));
+    CUDA_CHECK(
+        cudaMalloc(reinterpret_cast<void **>(&d_Ipiv), sizeof(int64_t) * n));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int)));
 
-    CUSOLVER_CHECK(cusolverDnXgetrf_bufferSize(
-        cusolverH, params, n, n, CUDA_R_32F, d_A, n, CUDA_R_32F,
-        &workspaceInBytesOnDevice, &workspaceInBytesOnHost));
+    CUSOLVER_CHECK(cusolverDnXgetrf_bufferSize(cusolverH, params, n, n,
+                                               data_type, d_A, n, data_type,
+                                               &d_work_size, &h_work_size));
 
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work),
-                          workspaceInBytesOnDevice));
-    if (0 < workspaceInBytesOnHost) {
-        h_work = reinterpret_cast<void *>(malloc(workspaceInBytesOnHost));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_work), d_work_size));
+    if (h_work_size > 0) {
+        h_work = reinterpret_cast<void *>(malloc(h_work_size));
         if (h_work == nullptr) {
             throw std::runtime_error("Error: h_work not allocated.");
         }
     }
 
-    CUSOLVER_CHECK(cusolverDnXgetrf(
-        cusolverH, params, n, n, CUDA_R_32F, d_A, n, d_Ipiv, CUDA_R_32F, d_work,
-        workspaceInBytesOnDevice, h_work, workspaceInBytesOnHost, d_info));
+    CUSOLVER_CHECK(cusolverDnXgetrf(cusolverH, params, n, n, data_type, d_A, n,
+                                    d_Ipiv, data_type, d_work, d_work_size,
+                                    h_work, h_work_size, d_info));
 
     CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
     if (0 > info) {
@@ -328,7 +328,7 @@ void invert_square_matrix(cusolverDnHandle_t &cusolverH,
                           cudaMemcpyHostToDevice));
 
     CUSOLVER_CHECK(cusolverDnXgetrs(cusolverH, params, CUBLAS_OP_N, n, n,
-                                    CUDA_R_32F, d_A, n, d_Ipiv, CUDA_R_32F, d_I,
+                                    data_type, d_A, n, d_Ipiv, data_type, d_I,
                                     n, d_info));
 
     CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
@@ -341,7 +341,6 @@ void invert_square_matrix(cusolverDnHandle_t &cusolverH,
                           cudaMemcpyDeviceToDevice));
 
     CUDA_CHECK(cudaFree(d_I));
-
     CUDA_CHECK(cudaFree(d_Ipiv));
     CUDA_CHECK(cudaFree(d_info));
 }
