@@ -9,6 +9,8 @@
 #include "dr_bcg/dr_bcg.h"
 #include "dr_bcg/helper.h"
 
+// Main solver functions
+
 /**
  * @brief Main DR-BCG solver routine.
  *
@@ -102,6 +104,246 @@ cusolverStatus_t dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH,
 
     return CUSOLVER_STATUS_SUCCESS;
 }
+
+cusolverStatus_t
+dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
+               cublasHandle_t cublasH, cusparseHandle_t cusparseH,
+               cusparseSpMatDescr_t &A, cusparseDnMatDescr_t &X,
+               cusparseDnMatDescr_t &B, float tolerance, int max_iterations,
+               int *iterations) {
+    NVTX3_FUNC_RANGE();
+
+    int64_t n = 0;
+    int64_t s = 0;
+    int64_t ld_X = 0;
+    float *d_X = nullptr;
+    cudaDataType X_dtype;
+    cusparseOrder_t X_order;
+    CUSPARSE_CHECK(cusparseDnMatGet(
+        X, &n, &s, &ld_X, reinterpret_cast<void **>(&d_X), &X_dtype, &X_order));
+
+    float *d_B = nullptr;
+    CUSPARSE_CHECK(cusparseDnMatGetValues(B, reinterpret_cast<void **>(&d_B)));
+
+    DeviceBuffer d(n, s);
+
+#ifdef USE_TENSOR_CORES
+    CUBLAS_CHECK(cublasSetMathMode(cublasH, CUBLAS_TF32_TENSOR_OP_MATH));
+#endif
+
+    // We don't include d_R in device buffers because it is only used once at
+    // the beginning of the algorithm.
+    cusparseDnMatDescr_t R;
+    float *d_R;
+    CUDA_CHECK(
+        cudaMalloc(reinterpret_cast<void **>(&d_R), sizeof(float) * n * s));
+    CUSPARSE_CHECK(
+        cusparseCreateDnMat(&R, n, s, n, d_R, CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+    // R = B - AX
+    get_R(cusparseH, R, A, X, B);
+
+#ifdef USE_THIN_QR
+    thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.sigma, n, s, d_R);
+#else
+    qr_factorization(cusolverH, cusolverParams, d.w, d.sigma, n, s, d_R);
+#endif
+
+    // R never used later
+    CUDA_CHECK(cudaFree(d_R));
+    CUSPARSE_CHECK(cusparseDestroyDnMat(R));
+
+    // s = w
+    CUDA_CHECK(
+        cudaMemcpy(d.s, d.w, sizeof(float) * n * s, cudaMemcpyDeviceToDevice));
+
+    float B1_norm;
+    constexpr int stride = 1;
+    CUBLAS_CHECK(cublasSnrm2_v2(cublasH, n, d_B, stride, &B1_norm));
+
+    cusparseDnVecDescr_t r;
+    CUSPARSE_CHECK(cusparseCreateDnVec(&r, n, d.residual, CUDA_R_32F));
+
+    int i = 0;
+    while (i < max_iterations) {
+        nvtx3::scoped_range loop{"iteration"};
+        ++i;
+
+        // xi = (s' * A * s)^-1
+        get_xi(cublasH, cusolverH, cusolverParams, cusparseH, A, n, s, d);
+
+        // X = X + s * xi * sigma
+        get_next_X(cublasH, n, s, d.s, d.xi, d.temp, d.sigma, d_X);
+
+        // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
+        float relative_residual_norm;
+        residual(cusparseH, r, d_B, A, X);
+
+        CUBLAS_CHECK(cublasSnrm2_v2(cublasH, n, d.residual, stride,
+                                    &relative_residual_norm));
+        relative_residual_norm /= B1_norm;
+
+        if (relative_residual_norm < tolerance) {
+            break;
+        } else {
+            nvtx3::scoped_range new_s_and_sigma{"get_new_s_and_sigma"};
+
+            get_w_zeta(cusolverH, cusolverParams, cublasH, cusparseH, n, s, d,
+                       A);
+
+            get_s(cublasH, n, s, d);
+
+            get_sigma(cublasH, s, d);
+        }
+    }
+
+    if (iterations) {
+        *iterations = i;
+    }
+
+    return CUSOLVER_STATUS_SUCCESS;
+}
+
+cusolverStatus_t
+dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
+               cublasHandle_t cublasH, cusparseHandle_t cusparseH,
+               cusparseSpMatDescr_t &A, cusparseDnMatDescr_t &X,
+               cusparseDnMatDescr_t &B, cusparseSpMatDescr_t &L,
+               float tolerance, int max_iterations, int *iterations) {
+    NVTX3_FUNC_RANGE();
+
+    cusparseFillMode_t fill = CUSPARSE_FILL_MODE_LOWER;
+    cusparseDiagType_t diag = CUSPARSE_DIAG_TYPE_NON_UNIT;
+    cusparseSpMatSetAttribute(L, CUSPARSE_SPMAT_FILL_MODE, &fill, sizeof(fill));
+    cusparseSpMatSetAttribute(L, CUSPARSE_SPMAT_DIAG_TYPE, &diag, sizeof(diag));
+
+    int64_t n = 0;
+    int64_t s = 0;
+    int64_t ld_X = 0;
+    float *d_X = nullptr;
+    cudaDataType X_dtype;
+    cusparseOrder_t X_order;
+    CUSPARSE_CHECK(cusparseDnMatGet(
+        X, &n, &s, &ld_X, reinterpret_cast<void **>(&d_X), &X_dtype, &X_order));
+
+    float *d_B = nullptr;
+    CUSPARSE_CHECK(cusparseDnMatGetValues(B, reinterpret_cast<void **>(&d_B)));
+
+    DeviceBuffer d(n, s);
+
+#ifdef USE_TENSOR_CORES
+    CUBLAS_CHECK(cublasSetMathMode(cublasH, CUBLAS_TF32_TENSOR_OP_MATH));
+#endif
+
+    // We don't include d_R in device buffers because it is only used once at
+    // the beginning of the algorithm.
+    cusparseDnMatDescr_t R;
+    float *d_R;
+    CUDA_CHECK(
+        cudaMalloc(reinterpret_cast<void **>(&d_R), sizeof(float) * n * s));
+    CUSPARSE_CHECK(
+        cusparseCreateDnMat(&R, n, s, n, d_R, CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+    // R = B - AX
+    get_R(cusparseH, R, A, X, B);
+
+    {
+        // [w, sigma] = qr(L^-1 * R,'econ')
+        cusparseDnMatDescr_t temp_desc{};
+        CUSPARSE_CHECK(cusparseCreateDnMat(&temp_desc, n, s, n, d.temp,
+                                           CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+        sptri_left_multiply(cusparseH, temp_desc,
+                            CUSPARSE_OPERATION_NON_TRANSPOSE, L, R);
+
+#ifdef USE_THIN_QR
+        thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.sigma, n, s, d_R);
+#else
+        qr_factorization(cusolverH, cusolverParams, d.w, d.sigma, n, s, d.temp);
+#endif
+
+        CUSPARSE_CHECK(cusparseDestroyDnMat(temp_desc));
+    }
+
+    // R never used later
+    CUDA_CHECK(cudaFree(d_R));
+    CUSPARSE_CHECK(cusparseDestroyDnMat(R));
+
+    // s = (L^-1)' * w
+    cusparseDnMatDescr_t w{};
+    CUSPARSE_CHECK(
+        cusparseCreateDnMat(&w, n, s, n, d.w, CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+    cusparseDnMatDescr_t s_desc{};
+    CUSPARSE_CHECK(cusparseCreateDnMat(&s_desc, n, s, n, d.s, CUDA_R_32F,
+                                       CUSPARSE_ORDER_COL));
+
+    sptri_left_multiply(cusparseH, s_desc, CUSPARSE_OPERATION_TRANSPOSE, L, w);
+
+    float B1_norm;
+    constexpr int stride = 1;
+    CUBLAS_CHECK(cublasSnrm2_v2(cublasH, n, d_B, stride, &B1_norm));
+
+    cusparseDnVecDescr_t r;
+    CUSPARSE_CHECK(cusparseCreateDnVec(&r, n, d.residual, CUDA_R_32F));
+
+    int i = 0;
+    while (i < max_iterations) {
+        nvtx3::scoped_range loop{"iteration"};
+        ++i;
+
+        // xi = (s' * A * s)^-1
+        get_xi(cublasH, cusolverH, cusolverParams, cusparseH, A, n, s, d);
+        check_non_finite(d.xi, s * s, "get_xi: iteration " + std::to_string(i));
+
+        // X = X + s * xi * sigma
+        get_next_X(cublasH, n, s, d.s, d.xi, d.temp, d.sigma, d_X);
+        check_non_finite(d_X, n * s,
+                         "get_next_X: iteration " + std::to_string(i));
+
+        // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
+        float relative_residual_norm;
+        residual(cusparseH, r, d_B, A, X);
+
+        CUBLAS_CHECK(cublasSnrm2_v2(cublasH, n, d.residual, stride,
+                                    &relative_residual_norm));
+        relative_residual_norm /= B1_norm;
+        std::cerr << i << ": " << relative_residual_norm << std::endl;
+
+        if (relative_residual_norm < tolerance) {
+            break;
+        } else {
+            nvtx3::scoped_range new_s_and_sigma{"get_new_s_and_sigma"};
+
+            // [w, zeta] = qr(w - (L^-1) * A * s * xi, 'econ')
+            get_w_zeta(cusolverH, cusolverParams, cublasH, cusparseH, n, s, d,
+                       A, L);
+            check_non_finite(d.w, n * s,
+                             "get_w_zeta (w): iteration " + std::to_string(i));
+            check_non_finite(d.zeta, s * s,
+                             "get_w_zeta (zeta): iteration " +
+                                 std::to_string(i));
+
+            // s = (L^-1)' * w + s * zeta'
+            get_s(cusparseH, cublasH, n, s, d, L);
+            check_non_finite(d.s, n * s,
+                             "get_s: iteration " + std::to_string(i));
+
+            // sigma = zeta * sigma
+            get_sigma(cublasH, s, d);
+            check_non_finite(d.sigma, s * s,
+                             "get_sigma: iteration " + std::to_string(i));
+        }
+    }
+
+    if (iterations) {
+        *iterations = i;
+    }
+
+    return CUSOLVER_STATUS_SUCCESS;
+}
+
+// Substep functions
 
 void dr_bcg::get_xi(cusolverDnHandle_t &cusolverH,
                     cusolverDnParams_t &cusolverParams, cublasHandle_t &cublasH,
@@ -315,105 +557,6 @@ void dr_bcg::get_R(cublasHandle_t &cublasH, float *R, const int n, const int s,
 
     CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, n, s, n,
                                 &alpha, A, n, X, n, &beta, R, n));
-}
-
-cusolverStatus_t
-dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
-               cublasHandle_t cublasH, cusparseHandle_t cusparseH,
-               cusparseSpMatDescr_t &A, cusparseDnMatDescr_t &X,
-               cusparseDnMatDescr_t &B, float tolerance, int max_iterations,
-               int *iterations) {
-    NVTX3_FUNC_RANGE();
-
-    int64_t n = 0;
-    int64_t s = 0;
-    int64_t ld_X = 0;
-    float *d_X = nullptr;
-    cudaDataType X_dtype;
-    cusparseOrder_t X_order;
-    CUSPARSE_CHECK(cusparseDnMatGet(
-        X, &n, &s, &ld_X, reinterpret_cast<void **>(&d_X), &X_dtype, &X_order));
-
-    float *d_B = nullptr;
-    CUSPARSE_CHECK(cusparseDnMatGetValues(B, reinterpret_cast<void **>(&d_B)));
-
-    DeviceBuffer d(n, s);
-
-#ifdef USE_TENSOR_CORES
-    CUBLAS_CHECK(cublasSetMathMode(cublasH, CUBLAS_TF32_TENSOR_OP_MATH));
-#endif
-
-    // We don't include d_R in device buffers because it is only used once at
-    // the beginning of the algorithm.
-    cusparseDnMatDescr_t R;
-    float *d_R;
-    CUDA_CHECK(
-        cudaMalloc(reinterpret_cast<void **>(&d_R), sizeof(float) * n * s));
-    CUSPARSE_CHECK(
-        cusparseCreateDnMat(&R, n, s, n, d_R, CUDA_R_32F, CUSPARSE_ORDER_COL));
-
-    // R = B - AX
-    get_R(cusparseH, R, A, X, B);
-
-#ifdef USE_THIN_QR
-    thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.sigma, n, s, d_R);
-#else
-    qr_factorization(cusolverH, cusolverParams, d.w, d.sigma, n, s, d_R);
-#endif
-
-    // R never used later
-    CUDA_CHECK(cudaFree(d_R));
-    CUSPARSE_CHECK(cusparseDestroyDnMat(R));
-
-    // s = w
-    CUDA_CHECK(
-        cudaMemcpy(d.s, d.w, sizeof(float) * n * s, cudaMemcpyDeviceToDevice));
-
-    float B1_norm;
-    constexpr int stride = 1;
-    CUBLAS_CHECK(cublasSnrm2_v2(cublasH, n, d_B, stride, &B1_norm));
-
-    cusparseDnVecDescr_t r;
-    CUSPARSE_CHECK(cusparseCreateDnVec(&r, n, d.residual, CUDA_R_32F));
-
-    int i = 0;
-    while (i < max_iterations) {
-        nvtx3::scoped_range loop{"iteration"};
-        ++i;
-
-        // xi = (s' * A * s)^-1
-        get_xi(cublasH, cusolverH, cusolverParams, cusparseH, A, n, s, d);
-
-        // X = X + s * xi * sigma
-        get_next_X(cublasH, n, s, d.s, d.xi, d.temp, d.sigma, d_X);
-
-        // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
-        float relative_residual_norm;
-        residual(cusparseH, r, d_B, A, X);
-
-        CUBLAS_CHECK(cublasSnrm2_v2(cublasH, n, d.residual, stride,
-                                    &relative_residual_norm));
-        relative_residual_norm /= B1_norm;
-
-        if (relative_residual_norm < tolerance) {
-            break;
-        } else {
-            nvtx3::scoped_range new_s_and_sigma{"get_new_s_and_sigma"};
-
-            get_w_zeta(cusolverH, cusolverParams, cublasH, cusparseH, n, s, d,
-                       A);
-
-            get_s(cublasH, n, s, d);
-
-            get_sigma(cublasH, s, d);
-        }
-    }
-
-    if (iterations) {
-        *iterations = i;
-    }
-
-    return CUSOLVER_STATUS_SUCCESS;
 }
 
 void dr_bcg::get_R(cusparseHandle_t &cusparseH, cusparseDnMatDescr_t &R,
@@ -641,145 +784,6 @@ void dr_bcg::get_w_zeta(cusolverDnHandle_t &cusolverH,
         qr_factorization(cusolverH, cusolverParams, d.w, d.zeta, n, s, d.w);
 #endif
     }
-}
-
-cusolverStatus_t
-dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
-               cublasHandle_t cublasH, cusparseHandle_t cusparseH,
-               cusparseSpMatDescr_t &A, cusparseDnMatDescr_t &X,
-               cusparseDnMatDescr_t &B, cusparseSpMatDescr_t &L,
-               float tolerance, int max_iterations, int *iterations) {
-    NVTX3_FUNC_RANGE();
-
-    cusparseFillMode_t fill = CUSPARSE_FILL_MODE_LOWER;
-    cusparseDiagType_t diag = CUSPARSE_DIAG_TYPE_NON_UNIT;
-    cusparseSpMatSetAttribute(L, CUSPARSE_SPMAT_FILL_MODE, &fill, sizeof(fill));
-    cusparseSpMatSetAttribute(L, CUSPARSE_SPMAT_DIAG_TYPE, &diag, sizeof(diag));
-
-    int64_t n = 0;
-    int64_t s = 0;
-    int64_t ld_X = 0;
-    float *d_X = nullptr;
-    cudaDataType X_dtype;
-    cusparseOrder_t X_order;
-    CUSPARSE_CHECK(cusparseDnMatGet(
-        X, &n, &s, &ld_X, reinterpret_cast<void **>(&d_X), &X_dtype, &X_order));
-
-    float *d_B = nullptr;
-    CUSPARSE_CHECK(cusparseDnMatGetValues(B, reinterpret_cast<void **>(&d_B)));
-
-    DeviceBuffer d(n, s);
-
-#ifdef USE_TENSOR_CORES
-    CUBLAS_CHECK(cublasSetMathMode(cublasH, CUBLAS_TF32_TENSOR_OP_MATH));
-#endif
-
-    // We don't include d_R in device buffers because it is only used once at
-    // the beginning of the algorithm.
-    cusparseDnMatDescr_t R;
-    float *d_R;
-    CUDA_CHECK(
-        cudaMalloc(reinterpret_cast<void **>(&d_R), sizeof(float) * n * s));
-    CUSPARSE_CHECK(
-        cusparseCreateDnMat(&R, n, s, n, d_R, CUDA_R_32F, CUSPARSE_ORDER_COL));
-
-    // R = B - AX
-    get_R(cusparseH, R, A, X, B);
-
-    {
-        // [w, sigma] = qr(L^-1 * R,'econ')
-        cusparseDnMatDescr_t temp_desc{};
-        CUSPARSE_CHECK(cusparseCreateDnMat(&temp_desc, n, s, n, d.temp,
-                                           CUDA_R_32F, CUSPARSE_ORDER_COL));
-
-        sptri_left_multiply(cusparseH, temp_desc,
-                            CUSPARSE_OPERATION_NON_TRANSPOSE, L, R);
-
-#ifdef USE_THIN_QR
-        thin_qr(cusolverH, cusolverParams, cublasH, d.w, d.sigma, n, s, d_R);
-#else
-        qr_factorization(cusolverH, cusolverParams, d.w, d.sigma, n, s, d.temp);
-#endif
-
-        CUSPARSE_CHECK(cusparseDestroyDnMat(temp_desc));
-    }
-
-    // R never used later
-    CUDA_CHECK(cudaFree(d_R));
-    CUSPARSE_CHECK(cusparseDestroyDnMat(R));
-
-    // s = (L^-1)' * w
-    cusparseDnMatDescr_t w{};
-    CUSPARSE_CHECK(
-        cusparseCreateDnMat(&w, n, s, n, d.w, CUDA_R_32F, CUSPARSE_ORDER_COL));
-
-    cusparseDnMatDescr_t s_desc{};
-    CUSPARSE_CHECK(cusparseCreateDnMat(&s_desc, n, s, n, d.s, CUDA_R_32F,
-                                       CUSPARSE_ORDER_COL));
-
-    sptri_left_multiply(cusparseH, s_desc, CUSPARSE_OPERATION_TRANSPOSE, L, w);
-
-    float B1_norm;
-    constexpr int stride = 1;
-    CUBLAS_CHECK(cublasSnrm2_v2(cublasH, n, d_B, stride, &B1_norm));
-
-    cusparseDnVecDescr_t r;
-    CUSPARSE_CHECK(cusparseCreateDnVec(&r, n, d.residual, CUDA_R_32F));
-
-    int i = 0;
-    while (i < max_iterations) {
-        nvtx3::scoped_range loop{"iteration"};
-        ++i;
-
-        // xi = (s' * A * s)^-1
-        get_xi(cublasH, cusolverH, cusolverParams, cusparseH, A, n, s, d);
-        check_non_finite(d.xi, s * s, "get_xi: iteration " + std::to_string(i));
-
-        // X = X + s * xi * sigma
-        get_next_X(cublasH, n, s, d.s, d.xi, d.temp, d.sigma, d_X);
-        check_non_finite(d_X, n * s,
-                         "get_next_X: iteration " + std::to_string(i));
-
-        // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
-        float relative_residual_norm;
-        residual(cusparseH, r, d_B, A, X);
-
-        CUBLAS_CHECK(cublasSnrm2_v2(cublasH, n, d.residual, stride,
-                                    &relative_residual_norm));
-        relative_residual_norm /= B1_norm;
-        std::cerr << i << ": " << relative_residual_norm << std::endl;
-
-        if (relative_residual_norm < tolerance) {
-            break;
-        } else {
-            nvtx3::scoped_range new_s_and_sigma{"get_new_s_and_sigma"};
-
-            // [w, zeta] = qr(w - (L^-1) * A * s * xi, 'econ')
-            get_w_zeta(cusolverH, cusolverParams, cublasH, cusparseH, n, s, d,
-                       A, L);
-            check_non_finite(d.w, n * s,
-                             "get_w_zeta (w): iteration " + std::to_string(i));
-            check_non_finite(d.zeta, s * s,
-                             "get_w_zeta (zeta): iteration " +
-                                 std::to_string(i));
-
-            // s = (L^-1)' * w + s * zeta'
-            get_s(cusparseH, cublasH, n, s, d, L);
-            check_non_finite(d.s, n * s,
-                             "get_s: iteration " + std::to_string(i));
-
-            // sigma = zeta * sigma
-            get_sigma(cublasH, s, d);
-            check_non_finite(d.sigma, s * s,
-                             "get_sigma: iteration " + std::to_string(i));
-        }
-    }
-
-    if (iterations) {
-        *iterations = i;
-    }
-
-    return CUSOLVER_STATUS_SUCCESS;
 }
 
 void dr_bcg::get_w_zeta(cusolverDnHandle_t &cusolverH,
