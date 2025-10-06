@@ -7,9 +7,27 @@
 #include "dr_bcg/dr_bcg.h"
 #include "dr_bcg/helper.h"
 
+#include <cuda/std/cmath>
+
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 #include <thrust/mismatch.h>
+
+template <typename T, typename = std::enable_if_t<std::is_floating_point_v<T>>>
+bool match(const thrust::host_vector<T> &a, const thrust::host_vector<T> &b,
+           T tolerance = 1e-6) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+
+    auto float_compare = [tolerance](T x, T y) {
+        return cuda::std::abs(x - y) <= tolerance;
+    };
+    auto [a_diff, b_diff] =
+        thrust::mismatch(a.begin(), a.end(), b.begin(), float_compare);
+
+    return a_diff == a.end() && b_diff == b.end();
+}
 
 TEST(QuadraticForm, ScalarOutputCorrect) {
     cublasHandle_t cublasH;
@@ -159,19 +177,7 @@ TEST(QuadraticForm, SparseIdentityCheck) {
     thrust::host_vector<float> got = Y;
     thrust::host_vector<float> expected(n * n);
     thrust::fill(expected.begin(), expected.end(), m);
-
-    auto close_match = [](float a, float b) {
-        constexpr float tolerance = 1e-6;
-        return std::abs(a - b) <= tolerance;
-    };
-    auto [expected_diff, got_diff] = thrust::mismatch(
-        expected.begin(), expected.end(), got.begin(), close_match);
-
-    std::cerr << "Mismatch at A: " << *expected_diff << std::endl;
-    std::cerr << "Mismatch at res: " << *got_diff << std::endl;
-
-    ASSERT_EQ(expected_diff, expected.end());
-    ASSERT_EQ(got_diff, got.end());
+    ASSERT_TRUE(match(expected, got));
 }
 
 TEST(Residual, OutputCorrect) {
@@ -233,36 +239,20 @@ TEST(InvertSquareMatrix, TwoByTwoMatrix) {
     thrust::device_vector<float> A(vals.begin(), vals.end());
     float *d_A = thrust::raw_pointer_cast(A.data());
 
-    std::cerr << "before" << std::endl;
-    print_device_matrix(d_A, m, m);
-
     invert_square_matrix(cusolverH, params, d_A, m);
+
+    CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
+    CUSOLVER_CHECK(cusolverDnDestroyParams(params));
 
     std::vector<float> expected_vals = {-2, 1.5f, 1, -0.5f};
     thrust::host_vector<float> expected(expected_vals.begin(),
                                         expected_vals.end());
-    thrust::host_vector<float> got = A;
-
-    auto close_match = [](float a, float b) {
-        constexpr float tolerance = 1e-6;
-        return std::abs(a - b) <= tolerance;
-    };
-    auto [expected_diff, got_diff] = thrust::mismatch(
-        expected.begin(), expected.end(), got.begin(), close_match);
-
-    std::cerr << "Mismatch at A: " << *expected_diff << std::endl;
-    std::cerr << "Mismatch at res: " << *got_diff << std::endl;
-
-    std::cerr << "after" << std::endl;
-    print_device_matrix(d_A, m, m);
     std::cerr << "expected" << std::endl;
-    print_matrix(expected_vals.data(), m, m);
+    print_matrix(thrust::raw_pointer_cast(expected.data()), m, m);
 
-    ASSERT_EQ(expected_diff, expected.end());
-    ASSERT_EQ(got_diff, got.end());
-
-    CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
-    CUSOLVER_CHECK(cusolverDnDestroyParams(params));
+    thrust::host_vector<float> got = A;
+    print_device_matrix(d_A, 2, 2);
+    ASSERT_TRUE(match(expected, got));
 }
 
 TEST(InvertSquareMatrix, DiagonalMatrix) {
@@ -298,27 +288,15 @@ TEST(InvertSquareMatrix, DiagonalMatrix) {
     // Operation
     invert_square_matrix(cusolverH, cusolverParams, d_A, m);
 
+    CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
+    CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
+
     // Test that result contains reciprocal of fill value on diagonal
     thrust::host_vector<float> expected(m * m);
     thrust::transform(begin, end, expected.begin(),
                       diagonal_functor(m, 1 / fill_value));
     thrust::host_vector<float> got = A;
-
-    auto close_match = [](float a, float b) {
-        constexpr float tolerance = 1e-6;
-        return std::abs(a - b) <= tolerance;
-    };
-    auto [expected_diff, got_diff] = thrust::mismatch(
-        expected.begin(), expected.end(), got.begin(), close_match);
-
-    std::cerr << "Mismatch at A: " << *expected_diff << std::endl;
-    std::cerr << "Mismatch at res: " << *got_diff << std::endl;
-
-    ASSERT_EQ(expected_diff, expected.end());
-    ASSERT_EQ(got_diff, got.end());
-
-    CUSOLVER_CHECK(cusolverDnDestroy(cusolverH));
-    CUSOLVER_CHECK(cusolverDnDestroyParams(cusolverParams));
+    ASSERT_TRUE(match(expected, got));
 }
 
 #ifdef DR_BCG_USE_THIN_QR
@@ -428,21 +406,9 @@ TEST(QR_Factorization, OutputCorrect) {
     CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, n,
                                 &alpha, d_Q, m, d_R, n, &beta, d_res, m));
 
-    thrust::host_vector<float> h_A = A;
-    thrust::host_vector<float> h_res = res;
-
-    auto close_match = [](float a, float b) {
-        constexpr float tolerance = 1e-6;
-        return std::abs(a - b) <= tolerance;
-    };
-    auto [A_diff, res_diff] =
-        thrust::mismatch(h_A.begin(), h_A.end(), h_res.begin(), close_match);
-
-    std::cerr << "Mismatch at A: " << *A_diff << std::endl;
-    std::cerr << "Mismatch at res: " << *res_diff << std::endl;
-
-    ASSERT_EQ(A_diff, h_A.end());
-    ASSERT_EQ(res_diff, h_res.end());
+    thrust::host_vector<float> expected = A;
+    thrust::host_vector<float> got = res;
+    ASSERT_TRUE(match(expected, got));
 }
 
 #endif // DR_BCG_USE_THIN_QR
@@ -552,26 +518,13 @@ TEST(SPTRI_LeftMultiply, IdentityStaysSame) {
     constexpr cusparseOperation_t op_type = CUSPARSE_OPERATION_NON_TRANSPOSE;
     sptri_left_multiply(cusparseH, C_desc, op_type, A_desc, B_desc);
 
-    // Verify C == B
-    thrust::host_vector<float> expected = B;
-    thrust::host_vector<float> got = C;
-
-    auto close_match = [](float a, float b) {
-        constexpr float tolerance = 1e-6;
-        return std::abs(a - b) <= tolerance;
-    };
-    auto [expected_diff, got_diff] = thrust::mismatch(
-        expected.begin(), expected.end(), got.begin(), close_match);
-
-    std::cerr << "Mismatch at A: " << *expected_diff << std::endl;
-    std::cerr << "Mismatch at res: " << *got_diff << std::endl;
-
-    ASSERT_EQ(expected_diff, expected.end());
-    ASSERT_EQ(got_diff, got.end());
-
     CUSPARSE_CHECK(cusparseDestroySpMat(A_desc));
     CUSPARSE_CHECK(cusparseDestroyDnMat(B_desc));
     CUSPARSE_CHECK(cusparseDestroyDnMat(C_desc));
 
     CUSPARSE_CHECK(cusparseDestroy(cusparseH));
+
+    thrust::host_vector<float> expected = B;
+    thrust::host_vector<float> got = C;
+    ASSERT_TRUE(match(expected, got));
 }
