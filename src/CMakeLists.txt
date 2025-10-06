@@ -1,4 +1,4 @@
-option(DR_BCG_USE_TENSOR_CORES "Enable the use of tensor cores via cuBLAS math mode" OFF)
+option(DR_BCG_USE_TENSOR_CORES "Enable the use of tensor cores via cuBLAS math mode" ON)
 option(DR_BCG_USE_THIN_QR "Use thin QR procedure instead of standard QR factorization" OFF)
 
 include(FetchContent)

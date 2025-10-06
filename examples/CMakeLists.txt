@@ -1,3 +1,2 @@
-add_subdirectory("example_0")
-add_subdirectory("example_1")
-add_subdirectory("example_2")
+add_subdirectory("1_read_mat_file")
+add_subdirectory("2_preconditioned")

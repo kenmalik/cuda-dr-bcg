@@ -3,12 +3,12 @@
 
 /**
  * @brief Constructor. Allocates all device buffers.
- * @param m m dimension
  * @param n n dimension
+ * @param s s dimension
  */
-DeviceBuffer::DeviceBuffer(int m, int n)
+DeviceBuffer::DeviceBuffer(int n, int s)
 {
-    allocate(m, n);
+    allocate(n, s);
 }
 
 /**
@@ -21,18 +21,18 @@ DeviceBuffer::~DeviceBuffer()
 
 /**
  * @brief Allocates device memory for all buffers.
- * @param m m dimension
  * @param n n dimension
+ * @param s s dimension
  */
-void DeviceBuffer::allocate(int m, int n)
+void DeviceBuffer::allocate(int n, int s)
 {
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&w), sizeof(float) * m * n));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&sigma), sizeof(float) * n * n));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&s), sizeof(float) * m * n));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&xi), sizeof(float) * n * n));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&zeta), sizeof(float) * n * n));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&temp), sizeof(float) * m * n));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&residual), sizeof(float) * m));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&w), sizeof(float) * n * s));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&sigma), sizeof(float) * s * s));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&(this->s)), sizeof(float) * n * s));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&xi), sizeof(float) * s * s));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&zeta), sizeof(float) * s * s));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&temp), sizeof(float) * n * s));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&residual), sizeof(float) * n));
 }
 
 /**

@@ -22,12 +22,3 @@ target_link_libraries(
 
 include(GoogleTest)
 gtest_discover_tests(dr_bcg_test)
-
-add_executable(
-    iterations_check
-    "iterations_check.cpp"
-)
-target_link_libraries(
-    iterations_check
-    dr_bcg
-)
