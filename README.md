@@ -62,7 +62,7 @@ cmake --build build
 
 ## Running Examples
 
-See [here](examples/README.md) for directions on building and running examples.
+See the [examples directory](examples/) for directions on building and running examples.
 
 ## Usage
 
