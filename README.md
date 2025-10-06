@@ -42,10 +42,10 @@ cmake --build build
 
 You can pass options when building the project for additional/altered functionality.
 
-The following options adjust the behavior of the DR-BCG algorithm. These are off by default:
+The following options adjust the behavior of the DR-BCG algorithm:
 
-- `DR_BCG_USE_TENSOR_CORES`: enable TF32 calculation using Tensor Cores.
-- `DR_BCG_USE_THIN_QR`: use Thin QR procedure rather than cuSOLVER's standard QR procedure for the factorization portions of DR-BCG.
+- `DR_BCG_USE_TENSOR_CORES`: Default `ON`. Enable TF32 calculation using Tensor Cores.
+- `DR_BCG_USE_THIN_QR`: Default `OFF`. Use Thin QR procedure rather than cuSOLVER's standard QR procedure for the factorization portions of DR-BCG.
 
 The following options build additional portions of the project. These are off by default:
 
