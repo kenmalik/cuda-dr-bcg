@@ -5,11 +5,6 @@
 
 #include <nvtx3/nvtx3.hpp>
 
-#include <cuda/std/cmath>
-
-#include <thrust/device_vector.h>
-#include <thrust/find.h>
-
 #include "dr_bcg/helper.h"
 
 /**
@@ -185,37 +180,6 @@ void fill_spd(float *mat, const int n, const std::optional<int> seed) {
     CUDA_CHECK(cudaFree(d_mat));
 
     CUBLAS_CHECK(cublasDestroy_v2(cublasH));
-}
-
-struct is_non_finite {
-    __device__ bool operator()(const float x) {
-        return !cuda::std::isfinite(x);
-    }
-};
-
-/**
- * @brief Checks for NaN values in a device array and throws an exception if any
- * are found.
- *
- * This function copies the contents of a device array to the host, checks for
- * NaN values, and throws a runtime exception if any NaN values are detected.
- * The exception message includes the step name provided as input.
- *
- * @param d_arr Device pointer to the array to check.
- * @param size Number of elements in the array.
- * @param step Description of the step after which the check is performed.
- *
- * @throws std::runtime_error if a NaN value is detected in the array.
- */
-void check_non_finite(const float *d_arr, size_t size, std::string step) {
-    thrust::device_ptr<const float> begin{d_arr};
-    auto first_nan = thrust::find_if(begin, begin + size, is_non_finite{});
-    if (first_nan != begin + size) {
-        throw std::runtime_error(
-            "Non-finite detected after step: " + step + " at value " +
-            std::to_string(thrust::distance(begin, first_nan)) + " (" +
-            std::to_string(*first_nan) + ")");
-    }
 }
 
 std::vector<double> read_matrix_bin(std::string filename) {

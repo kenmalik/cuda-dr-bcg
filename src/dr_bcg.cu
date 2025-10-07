@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <iostream>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -8,6 +7,63 @@
 
 #include "dr_bcg/dr_bcg.h"
 #include "dr_bcg/helper.h"
+
+// Debugging code
+
+#ifdef CUDA_DR_BCG_DEBUG_BUILD
+
+#include <cuda/std/cmath>
+#include <thrust/device_vector.h>
+
+#include <iostream>
+#include <sstream>
+
+#define DEBUG_LOG(val) std::cerr << val << std::endl;
+
+#define NON_FINITE_CHECK(mat, size, step, iteration)                           \
+    check_non_finite(mat, size, step, iteration);
+
+struct is_non_finite {
+    __device__ bool operator()(const float x) {
+        return !cuda::std::isfinite(x);
+    }
+};
+
+/**
+ * @brief Checks for NaN values in a device array.
+ *
+ * @param d_arr Device pointer to the array to check.
+ * @param size Number of elements in the array.
+ * @param step Description of the step after which the check is performed.
+ * @param iteration Iteration in which the check is performed.
+ *
+ * @throws std::runtime_error if a NaN value is detected in the array.
+ */
+void check_non_finite(const float *d_arr, size_t size, const char *step,
+                      int iteration) {
+    thrust::device_ptr<const float> begin{d_arr};
+    auto first_nan = thrust::find_if(begin, begin + size, is_non_finite{});
+    if (first_nan != begin + size) {
+        std::ostringstream oss;
+        oss << "Non-finite detected after step: " << step << " (iteration "
+            << iteration << ") at value "
+            << std::to_string(thrust::distance(begin, first_nan)) << " ("
+            << std::to_string(*first_nan) << ")";
+        throw std::runtime_error(oss.str());
+    }
+}
+
+#else
+
+#define DEBUG_LOG(val)                                                         \
+    do {                                                                       \
+    } while (0);
+
+#define NON_FINITE_CHECK(mat, size, step, iteration)                           \
+    do {                                                                       \
+    } while (0);
+
+#endif
 
 // Main solver functions
 
@@ -294,12 +350,11 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
 
         // xi = (s' * A * s)^-1
         get_xi(cublasH, cusolverH, cusolverParams, cusparseH, A, n, s, d);
-        check_non_finite(d.xi, s * s, "get_xi: iteration " + std::to_string(i));
+        NON_FINITE_CHECK(d.xi, s * s, "get_xi", i);
 
         // X = X + s * xi * sigma
         get_next_X(cublasH, n, s, d.s, d.xi, d.temp, d.sigma, d_X);
-        check_non_finite(d_X, n * s,
-                         "get_next_X: iteration " + std::to_string(i));
+        NON_FINITE_CHECK(d_X, n * s, "get_next_X", i);
 
         // norm(B(:,1) - A * X(:,1)) / norm(B(:,1))
         float relative_residual_norm;
@@ -308,7 +363,7 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
         CUBLAS_CHECK(cublasSnrm2_v2(cublasH, n, d.residual, stride,
                                     &relative_residual_norm));
         relative_residual_norm /= B1_norm;
-        std::cerr << i << ": " << relative_residual_norm << std::endl;
+        DEBUG_LOG(relative_residual_norm);
 
         if (relative_residual_norm < tolerance) {
             break;
@@ -318,21 +373,16 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
             // [w, zeta] = qr(w - (L^-1) * A * s * xi, 'econ')
             get_w_zeta(cusolverH, cusolverParams, cublasH, cusparseH, n, s, d,
                        A, L);
-            check_non_finite(d.w, n * s,
-                             "get_w_zeta (w): iteration " + std::to_string(i));
-            check_non_finite(d.zeta, s * s,
-                             "get_w_zeta (zeta): iteration " +
-                                 std::to_string(i));
+            NON_FINITE_CHECK(d.w, n * s, "get_w_zeta (w)", i);
+            NON_FINITE_CHECK(d.zeta, s * s, "get_w_zeta (zeta)", i);
 
             // s = (L^-1)' * w + s * zeta'
             get_s(cusparseH, cublasH, n, s, d, L);
-            check_non_finite(d.s, n * s,
-                             "get_s: iteration " + std::to_string(i));
+            NON_FINITE_CHECK(d.s, n * s, "get_s", i);
 
             // sigma = zeta * sigma
             get_sigma(cublasH, s, d);
-            check_non_finite(d.sigma, s * s,
-                             "get_sigma: iteration " + std::to_string(i));
+            NON_FINITE_CHECK(d.sigma, s * s, "get_sigma", i);
         }
     }
 
