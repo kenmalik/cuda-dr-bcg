@@ -97,10 +97,6 @@ cusolverStatus_t dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH,
 
     DeviceBuffer d(n, s);
 
-#ifdef USE_TENSOR_CORES
-    CUBLAS_CHECK(cublasSetMathMode(cublasH, CUBLAS_TF32_TENSOR_OP_MATH));
-#endif
-
     // We don't include d_R in device buffers because it is only used once at
     // the beginning of the algorithm.
     float *d_R;
@@ -182,10 +178,6 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
     CUSPARSE_CHECK(cusparseDnMatGetValues(B, reinterpret_cast<void **>(&d_B)));
 
     DeviceBuffer d(n, s);
-
-#ifdef USE_TENSOR_CORES
-    CUBLAS_CHECK(cublasSetMathMode(cublasH, CUBLAS_TF32_TENSOR_OP_MATH));
-#endif
 
     // We don't include d_R in device buffers because it is only used once at
     // the beginning of the algorithm.
@@ -286,10 +278,6 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
     CUSPARSE_CHECK(cusparseDnMatGetValues(B, reinterpret_cast<void **>(&d_B)));
 
     DeviceBuffer d(n, s);
-
-#ifdef USE_TENSOR_CORES
-    CUBLAS_CHECK(cublasSetMathMode(cublasH, CUBLAS_TF32_TENSOR_OP_MATH));
-#endif
 
     // We don't include d_R in device buffers because it is only used once at
     // the beginning of the algorithm.
