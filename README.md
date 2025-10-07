@@ -62,53 +62,7 @@ cmake --build build
 
 ## Running Examples
 
-See [here](examples/README.md) for directions on building and running examples.
-
-## Usage
-
-The library currently provides two interfaces for the algorithm (the core solving portion is the same under the hood).
-
-### From Host Memory
-
-There exists a convenience wrapper for calling the algorithm using vectors:
-
-```c++
-std::tuple<std::vector<float>, int> dr_bcg(
-    const std::vector<float> &A,
-    const std::vector<float> &X,
-    const std::vector<float> &B,
-    const int m,
-    const int n,
-    const float tolerance,
-    const int max_iterations);
-```
-
-You can call this interface like so:
-
-```c++
-auto [solution, iterations] = dr_bcg::dr_bcg(A, X, B, m, n, tolerance, max_iterations);
-```
-
-### From Device Memory
-
-There also exists an interface for those who wish to call the routine using device memory pointers:
-
-```c++
-cusolverStatus_t dr_bcg(
-    cusolverDnHandle_t cusolverH,
-    cusolverDnParams_t cusolverParams,
-    cublasHandle_t cublasH,
-    int m,
-    int n,
-    const float *A,
-    float *X,
-    const float *B,
-    float tolerance,
-    int max_iterations,
-    int *iterations);
-```
-
-See the convenience wrapper implementation for an example of how to call this interface.
+See the [examples directory](examples/) for directions on building and running examples.
 
 ## Building Tests and Benchmarks
 
