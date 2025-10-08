@@ -196,6 +196,7 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
     return CUSOLVER_STATUS_SUCCESS;
 }
 
+// Preconditioned DR-BCG taking preconditioner L
 cusolverStatus_t
 dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
                cublasHandle_t cublasH, cusparseHandle_t cusparseH,
@@ -275,6 +276,13 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
     cusparseDnVecDescr_t r;
     CUSPARSE_CHECK(cusparseCreateDnVec(&r, n, d.residual, CUDA_R_32F));
 
+    DEBUG_LOG("s");
+    DEBUG_LOG_DMAT(d.s, s, s, n);
+    DEBUG_LOG("w");
+    DEBUG_LOG_DMAT(d.w, s, s, n);
+    DEBUG_LOG("sigma");
+    DEBUG_LOG_DMAT(d.sigma, s, s, s);
+
     int i = 0;
     while (i < max_iterations) {
         nvtx3::scoped_range loop{"iteration"};
@@ -295,7 +303,6 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
         CUBLAS_CHECK(cublasSnrm2_v2(cublasH, n, d.residual, stride,
                                     &relative_residual_norm));
         relative_residual_norm /= B1_norm;
-        DEBUG_LOG(relative_residual_norm);
 
         if (relative_residual_norm < tolerance) {
             break;
