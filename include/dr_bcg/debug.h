@@ -6,6 +6,7 @@
 #include <thrust/device_vector.h>
 
 #include <iostream>
+#include <iomanip>
 #include <sstream>
 
 #define DEBUG_LOG(val) std::cerr << val << std::endl;
@@ -16,13 +17,19 @@
 void print_device_matrix(const float *d_mat, int m, int n, int lda) {
     thrust::device_ptr<const float> begin{d_mat};
     int offset = 0;
+
+    auto original_precision = std::cerr.precision();
+    std::cerr << std::scientific << std::setprecision(4);
+
     for (int i = 0; i < m; ++i) {
         for (int j = 0; j < n; ++j) {
             offset = j * lda + i;
-            std::cerr << *(begin + offset) << " ";
+            std::cerr << std::setw(12) << *(begin + offset) << " ";
         }
         std::cerr << std::endl;
     }
+
+    std::cerr << std::defaultfloat << std::setprecision(original_precision);
 }
 
 #define NON_FINITE_CHECK(mat, size, step, iteration)                           \
