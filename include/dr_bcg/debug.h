@@ -16,15 +16,13 @@
 // Print m by n column-major device matrix
 void print_device_matrix(const float *d_mat, int m, int n, int lda) {
     thrust::device_ptr<const float> begin{d_mat};
-    int offset = 0;
 
     auto original_precision = std::cerr.precision();
     std::cerr << std::scientific << std::setprecision(4);
 
     for (int i = 0; i < m; ++i) {
         for (int j = 0; j < n; ++j) {
-            offset = j * lda + i;
-            std::cerr << std::setw(12) << *(begin + offset) << " ";
+            std::cerr << std::setw(12) << *(begin + j * lda + i) << " ";
         }
         std::cerr << std::endl;
     }
