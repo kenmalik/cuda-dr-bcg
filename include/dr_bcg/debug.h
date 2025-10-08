@@ -10,6 +10,21 @@
 
 #define DEBUG_LOG(val) std::cerr << val << std::endl;
 
+#define DEBUG_LOG_DMAT(A, m, n, lda) print_device_matrix(A, m, n, lda);
+
+// Print m by n column-major device matrix
+void print_device_matrix(const float *d_mat, int m, int n, int lda) {
+    thrust::device_ptr<const float> begin{d_mat};
+    int offset = 0;
+    for (int i = 0; i < m; ++i) {
+        for (int j = 0; j < n; ++j) {
+            offset = j * lda + i;
+            std::cerr << *(begin + offset) << " ";
+        }
+        std::cerr << std::endl;
+    }
+}
+
 #define NON_FINITE_CHECK(mat, size, step, iteration)                           \
     check_non_finite(mat, size, step, iteration);
 
@@ -46,6 +61,10 @@ void check_non_finite(const float *d_arr, size_t size, const char *step,
 #else
 
 #define DEBUG_LOG(val)                                                         \
+    do {                                                                       \
+    } while (0);
+
+#define DEBUG_LOG_DMAT(A, m, n, lda)                                           \
     do {                                                                       \
     } while (0);
 
