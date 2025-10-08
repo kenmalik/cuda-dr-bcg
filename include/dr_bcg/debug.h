@@ -5,29 +5,33 @@
 #include <cuda/std/cmath>
 #include <thrust/device_vector.h>
 
-#include <iostream>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 
 #define DEBUG_LOG(val) std::cerr << val << std::endl;
+#define DEBUG_SLOG(val, stream) stream << val << std::endl;
 
 #define DEBUG_LOG_DMAT(A, m, n, lda) print_device_matrix(A, m, n, lda);
+#define DEBUG_SLOG_DMAT(A, m, n, lda, stream)                                  \
+    print_device_matrix(A, m, n, lda, stream);
 
 // Print m by n column-major device matrix
-void print_device_matrix(const float *d_mat, int m, int n, int lda) {
+void print_device_matrix(const float *d_mat, int m, int n, int lda,
+                         std::ostream &os = std::cerr) {
     thrust::device_ptr<const float> begin{d_mat};
 
     auto original_precision = std::cerr.precision();
-    std::cerr << std::scientific << std::setprecision(5);
+    os << std::scientific << std::setprecision(5);
 
     for (int i = 0; i < m; ++i) {
         for (int j = 0; j < n; ++j) {
-            std::cerr << std::setw(12) << *(begin + j * lda + i) << " ";
+            os << std::setw(12) << *(begin + j * lda + i) << " ";
         }
-        std::cerr << std::endl;
+        os << std::endl;
     }
 
-    std::cerr << std::defaultfloat << std::setprecision(original_precision);
+    os << std::defaultfloat << std::setprecision(original_precision);
 }
 
 #define NON_FINITE_CHECK(mat, size, step, iteration)                           \
@@ -69,7 +73,15 @@ void check_non_finite(const float *d_arr, size_t size, const char *step,
     do {                                                                       \
     } while (0);
 
+#define DEBUG_SLOG(val, stream)                                                \
+    do {                                                                       \
+    } while (0);
+
 #define DEBUG_LOG_DMAT(A, m, n, lda)                                           \
+    do {                                                                       \
+    } while (0);
+
+#define DEBUG_SLOG_DMAT(A, m, n, lda, stream)                                  \
     do {                                                                       \
     } while (0);
 
