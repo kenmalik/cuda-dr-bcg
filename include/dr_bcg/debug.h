@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <cassert>
 
 #define DEBUG_LOG(val) std::cerr << val << std::endl;
 #define DEBUG_SLOG(val, stream) stream << val << std::endl;
@@ -17,9 +18,11 @@
     print_device_matrix(A, m, n, lda, stream);
 
 // Print m by n column-major device matrix
-void print_device_matrix(const float *d_mat, int m, int n, int lda,
+void print_device_matrix(const float *d_A, int m, int n, int lda,
                          std::ostream &os = std::cerr) {
-    thrust::device_ptr<const float> begin{d_mat};
+    assert(m <= lda && "m must be less than or equal to lda");
+
+    thrust::device_ptr<const float> begin{d_A};
 
     auto original_precision = std::cerr.precision();
     os << std::scientific << std::setprecision(5);
