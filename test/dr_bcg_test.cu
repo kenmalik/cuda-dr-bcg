@@ -415,7 +415,7 @@ TEST(QR_Factorization, ProductOfFactorsIsA) {
 
     thrust::host_vector<float> expected = A;
     thrust::host_vector<float> got = res;
-    ASSERT_TRUE(match(expected, got));
+    ASSERT_TRUE(match(expected, got, 1e-5f));
 }
 
 #endif // DR_BCG_USE_THIN_QR
