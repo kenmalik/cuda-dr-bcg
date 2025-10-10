@@ -392,6 +392,10 @@ TEST(QR_Factorization, ProductOfFactorsIsA) {
     float *d_R = thrust::raw_pointer_cast(R.data());
 
     qr_factorization(cusolverH, params, d_Q, d_R, m, n, d_A);
+
+    std::cerr << "Q" << std::endl;
+    print_device_matrix(d_Q, m, n);
+    std::cerr << std::endl << "R" << std::endl;
     print_device_matrix(d_R, n, n);
 
     // Verification that A = Q * R
