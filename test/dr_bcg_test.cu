@@ -382,7 +382,7 @@ TEST(QR_Factorization, ProductOfFactorsIsA) {
     CUSOLVER_CHECK(cusolverDnCreateParams(&params));
 
     thrust::device_vector<float> A(m * n);
-    thrust::fill(A.begin(), A.end(), 1);
+    thrust::fill(A.begin(), A.end(), 2);
     float *d_A = thrust::raw_pointer_cast(A.data());
 
     thrust::device_vector<float> Q(m * n);
