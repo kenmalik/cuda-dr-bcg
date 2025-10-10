@@ -410,6 +410,9 @@ TEST(QR_Factorization, ProductOfFactorsIsA) {
     CUBLAS_CHECK(cublasSgemm_v2(cublasH, CUBLAS_OP_N, CUBLAS_OP_N, m, n, n,
                                 &alpha, d_Q, m, d_R, n, &beta, d_res, m));
 
+    std::cerr << std::endl << "Q * R" << std::endl;
+    print_device_matrix(d_res, n, n);
+
     thrust::host_vector<float> expected = A;
     thrust::host_vector<float> got = res;
     ASSERT_TRUE(match(expected, got));
