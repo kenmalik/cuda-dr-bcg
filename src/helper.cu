@@ -324,17 +324,17 @@ void qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params,
  *
  * @param cusolverH cuSOLVER handle
  * @param params Params for the cuSOLVER handle
- * @param Q Pointer to device memory to store Q result in
- * @param R Pointer to device memory to store R result in. Note that the lower
+ * @param d_Q Pointer to device memory to store Q result in
+ * @param d_R Pointer to device memory to store R result in. Note that the lower
  * triangular still contains householder vectors and must be handled accordingly
  * (e.g. by using trmm in future multiplications using the R factor)
  * @param m m-dimension (leading dimension) of A
  * @param n n-dimension (second dimension) of A
- * @param A The matrix to factorize (device pointer)
+ * @param d_A The matrix to factorize (device pointer)
  */
 void qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params,
-                      float *Q, float *R, const int m, const int n,
-                      const float *A) {
+                      float *d_Q, float *d_R, const int m, const int n,
+                      const float *d_A) {
     NVTX3_FUNC_RANGE();
 
     int k = std::min(m, n);
@@ -351,17 +351,17 @@ void qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params,
     void *h_work = nullptr;
 
     CUDA_CHECK(
-        cudaMemcpy(Q, A, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
+        cudaMemcpy(d_Q, d_A, sizeof(float) * m * n, cudaMemcpyDeviceToDevice));
 
     // Create device buffer
     size_t lwork_geqrf_bytes_d = 0;
     CUSOLVER_CHECK(cusolverDnXgeqrf_bufferSize(
-        cusolverH, params, m, n, CUDA_R_32F, Q, m, CUDA_R_32F, d_tau,
+        cusolverH, params, m, n, CUDA_R_32F, d_Q, m, CUDA_R_32F, d_tau,
         CUDA_R_32F, &lwork_geqrf_bytes_d, &lwork_geqrf_h));
 
     int lwork_orgqr = 0;
-    CUSOLVER_CHECK(cusolverDnSorgqr_bufferSize(cusolverH, m, n, k, Q, m, d_tau,
-                                               &lwork_orgqr));
+    CUSOLVER_CHECK(cusolverDnSorgqr_bufferSize(cusolverH, m, n, k, d_Q, m,
+                                               d_tau, &lwork_orgqr));
 
     // Note: The legacy cuSOLVER API returns lwork number of array values
     // while the generic API returns lwork in bytes.
@@ -379,7 +379,7 @@ void qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params,
     }
 
     CUSOLVER_CHECK(cusolverDnXgeqrf(
-        cusolverH, params, m, n, CUDA_R_32F, Q, m, CUDA_R_32F, d_tau,
+        cusolverH, params, m, n, CUDA_R_32F, d_Q, m, CUDA_R_32F, d_tau,
         CUDA_R_32F, d_work, lwork_bytes_d, h_work, lwork_geqrf_h, d_info));
     if (h_work) {
         free(h_work); // No longer needed
@@ -392,10 +392,10 @@ void qr_factorization(cusolverDnHandle_t &cusolverH, cusolverDnParams_t &params,
     }
 
     const int max_R_col = std::min(m, n);
-    copy_upper_triangular(R, Q, m, n);
+    copy_upper_triangular(d_R, d_Q, m, n);
 
     // Explicitly compute Q
-    CUSOLVER_CHECK(cusolverDnSorgqr(cusolverH, m, n, k, Q, m, d_tau,
+    CUSOLVER_CHECK(cusolverDnSorgqr(cusolverH, m, n, k, d_Q, m, d_tau,
                                     reinterpret_cast<float *>(d_work),
                                     lwork_bytes_d, d_info));
     CUDA_CHECK(cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
