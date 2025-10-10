@@ -205,11 +205,6 @@ dr_bcg::dr_bcg(cusolverDnHandle_t cusolverH, cusolverDnParams_t cusolverParams,
                float tolerance, int max_iterations, int *iterations) {
     NVTX3_FUNC_RANGE();
 
-    cusparseFillMode_t fill = CUSPARSE_FILL_MODE_LOWER;
-    cusparseDiagType_t diag = CUSPARSE_DIAG_TYPE_NON_UNIT;
-    cusparseSpMatSetAttribute(L, CUSPARSE_SPMAT_FILL_MODE, &fill, sizeof(fill));
-    cusparseSpMatSetAttribute(L, CUSPARSE_SPMAT_DIAG_TYPE, &diag, sizeof(diag));
-
     int64_t n = 0;
     int64_t s = 0;
     int64_t ld_X = 0;

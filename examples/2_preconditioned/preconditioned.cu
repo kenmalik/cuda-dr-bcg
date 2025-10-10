@@ -96,7 +96,7 @@ public:
         }
     }
 
-    cusparseSpMatDescr_t &handle()
+    cusparseSpMatDescr_t &get()
     {
         return A_;
     }
@@ -166,6 +166,11 @@ int main(int argc, char *argv[])
     mat_utils::MatReader ssm_L(L_file, {}, "L");
     DeviceSuiteSparseMatrix L{ssm_L};
 
+    cusparseFillMode_t fill = CUSPARSE_FILL_MODE_LOWER;
+    cusparseDiagType_t diag = CUSPARSE_DIAG_TYPE_NON_UNIT;
+    cusparseSpMatSetAttribute(L.get(), CUSPARSE_SPMAT_FILL_MODE, &fill, sizeof(fill));
+    cusparseSpMatSetAttribute(L.get(), CUSPARSE_SPMAT_DIAG_TYPE, &diag, sizeof(diag));
+
     // X = 0
     thrust::device_vector<float> X_vec(n * s);
     thrust::fill(X_vec.begin(), X_vec.end(), 0);
@@ -184,7 +189,7 @@ int main(int argc, char *argv[])
     const int max_iterations = n;
 
     int iterations = 0;
-    dr_bcg::dr_bcg(cusolverH, cusolverP, cublasH, cusparseH, A.handle(), X, B, L.handle(), tolerance, max_iterations, &iterations);
+    dr_bcg::dr_bcg(cusolverH, cusolverP, cublasH, cusparseH, A.get(), X, B, L.get(), tolerance, max_iterations, &iterations);
 
     std::cout << iterations << std::endl;
 
