@@ -372,7 +372,7 @@ TEST(ThinQR, OutputCorrect) {
 
 #else
 
-TEST(QR_Factorization, OutputCorrect) {
+TEST(QR_Factorization, ProductOfFactorsIsA) {
     constexpr int m = 8;
     constexpr int n = 4;
 
