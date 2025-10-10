@@ -4,7 +4,7 @@ set(CMAKE_BUILD_TYPE "Release")
 include(FetchContent)
 FetchContent_Declare(
     benchmark
-    GIT_REPOSITORY git@github.com:google/benchmark.git
+    GIT_REPOSITORY https://github.com/google/benchmark.git
     GIT_TAG v1.9.4
 )
 FetchContent_MakeAvailable(benchmark)

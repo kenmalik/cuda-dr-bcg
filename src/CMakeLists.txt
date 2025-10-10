@@ -3,7 +3,7 @@ option(DR_BCG_USE_THIN_QR "Use thin QR procedure instead of standard QR factoriz
 include(FetchContent)
 FetchContent_Declare(
     nvtx
-    GIT_REPOSITORY git@github.com:NVIDIA/NVTX.git
+    GIT_REPOSITORY https://github.com/NVIDIA/NVTX.git
     GIT_TAG v3.2.1
 )
 FetchContent_MakeAvailable(nvtx)
