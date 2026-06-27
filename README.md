@@ -1,5 +1,9 @@
 # CUDA DR-BCG
 
+> [!WARNING]
+> Development of this algorithm has moved to [kenmalik/linear-solvers](https://github.com/kenmalik/linear-solvers).
+> This repository has been archived.
+
 ## Introduction
 
 This is a CUDA implementation of the Dubrulle-R Block Conjugate Gradient (DR-BCG) algorithm for solving linear systems.
